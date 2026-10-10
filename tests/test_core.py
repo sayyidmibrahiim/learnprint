@@ -55,20 +55,32 @@ class TestCore(unittest.TestCase):
         self.assertEqual(r["competencies"][0]["status"],"emerging")
 
     def test_transfer_and_application_qualify_immediate_only(self):
+        import datetime as _dt
         p=mod.load(ROOT/"templates/topic-state.json")
         e=[self._event("independent_application",1,"application"),self._event("novel_transfer",2,"transfer")]
-        r=mod.progress(p,e)
+        now=_dt.datetime.fromisoformat("2026-10-10T02:00:00+07:00")
+        r=mod.progress(p,e,now=now)
         self.assertEqual(r["competencies"][0]["status"],"demonstrated")
         self.assertEqual(r["observed_maintained_percent"],0)
+        # Delayed retrieval counts as retention only after the policy floor
+        # elapses (contract change C5/F4: immediate re-tests are not retention).
         e.append(self._event("delayed_retrieval",3,"concept"))
-        self.assertEqual(mod.progress(p,e)["competencies"][0]["status"],"maintained")
+        e[-1]["date"]="2026-10-11T03:00:00+07:00"
+        now2=_dt.datetime.fromisoformat("2026-10-11T04:00:00+07:00")
+        self.assertEqual(mod.progress(p,e,now=now2)["competencies"][0]["status"],"maintained")
 
-    def test_ai_grade_not_strong_mastery(self):
+    def test_ai_grade_is_provisional_not_verified(self):
+        # Contract change C4/F4: AI-graded observed responses ARE usable
+        # progress, honestly labeled provisional — never filtered out, never
+        # presented as verified mastery. Replaces test_ai_grade_not_strong_mastery.
+        import datetime as _dt
         p=mod.load(ROOT/"templates/topic-state.json")
         e=[self._event("independent_application",1,"application"),self._event("novel_transfer",2,"transfer")]
         e[1]["grader"]="ai_reviewed"
-        r=mod.progress(p,e)
-        self.assertEqual(r["competencies"][0]["status"],"emerging")
+        now=_dt.datetime.fromisoformat("2026-10-10T02:00:00+07:00")
+        r=mod.progress(p,e,now=now)
+        self.assertEqual(r["competencies"][0]["status"],"demonstrated")
+        self.assertEqual(r["competencies"][0]["basis"],"provisional")
 
     def test_synthetic_excluded(self):
         p=mod.load(ROOT/"templates/topic-state.json")
@@ -85,6 +97,7 @@ class TestCore(unittest.TestCase):
         self.assertEqual(due[0]["interval_days"],1)
         self.assertEqual(due[0]["delivery"],"manual; no automatic notification")
         e.append(self._event("delayed_retrieval",3,"concept"))
+        e[-1]["date"]="2026-10-11T03:00:00+07:00"
         self.assertEqual(mod.reviews_from_events([p],e)["reviews"][0]["interval_days"],3)
 
     def test_empty_workspace_init_and_no_overwrite(self):

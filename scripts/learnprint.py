@@ -182,8 +182,12 @@ def evidence_basis(cycle_events, ledger):
         and e.get("evidence_origin") == "observed_response"
         for e in ledger
     )
-    sources = {e.get("grader_source") for e in cycle_events
-               if e.get("grader_source")}
+    # Corroboration compares against the TARGET's source, not the whole
+    # cycle's: a linked second review from a different source than the
+    # reviewed event counts even when both belong to the same cycle.
+    # (Comparing against the whole cycle would make substantiation
+    # unreachable, since a valid corroborator is itself cycle evidence.)
+    by_id = {e.get("event_id"): e for e in ledger if isinstance(e, dict)}
     corroborated = any(
         e.get("task_type") in DEMO_TYPES
         and e.get("corroborates_event_id") in ids
@@ -192,9 +196,9 @@ def evidence_basis(cycle_events, ledger):
         and e.get("rubric") is not None
         and e.get("help_level") == "none"
         and e.get("evidence_origin") == "observed_response"
-        and e.get("grader_source") not in sources
         and e.get("grader_source") is not None
-        for e in ledger if e not in cycle_events
+        and e.get("grader_source") != (by_id.get(e.get("corroborates_event_id")) or {}).get("grader_source")
+        for e in ledger
     )
     if corroborated:
         return "substantiated"
@@ -203,40 +207,225 @@ def evidence_basis(cycle_events, ledger):
     return "provisional"
 
 
-def progress(topic, events, now=None):
-    """Conservative evidence-derived progress; not a semantic correctness verifier."""
-    now = now or dt.datetime.now(dt.timezone.utc)
-    by_comp={}
-    for e in events:
-        if e.get("topic_id") != topic.get("topic_id") or e.get("is_synthetic_example"): continue
-        if validate_event(e): continue
-        by_comp.setdefault(e["competency_id"], []).append(e)
-    results=[]
-    for c in topic.get("learning_scope", []):
-        ev=sorted(by_comp.get(c["id"], []),key=lambda x:x["date"])
-        independent = [x for x in ev if x["help_level"] == "none" and x["grader"] == "human_reviewed" and x["evidence_origin"] == "observed_response"]
-        application = any(x["task_type"] == "independent_application" and x["rubric"].get("application") == 2 for x in independent)
-        transfer = any(x["task_type"] == "novel_transfer" and x["rubric"].get("transfer") == 2 for x in independent)
-        delayed = [x for x in independent if x["task_type"] == "delayed_retrieval" and all(v == 2 for v in (x["rubric"].get("concept"),x["rubric"].get("application")))]
-        if not ev: status="unknown"
-        elif delayed and application and transfer: status="maintained"
-        elif application and transfer: status="demonstrated"
-        else: status="emerging"
-        due=c.get("due_at")
-        if status in {"demonstrated", "maintained"} and due:
+RETENTION_POLICY = {"min_elapsed_hours": 20, "intervals_days": [1, 3, 7, 21]}
+
+
+class LedgerDamage(ValueError):
+    """Raised when events.jsonl cannot be parsed completely."""
+
+
+class LedgerMissing(ValueError):
+    """Raised when an expected evidence ledger is absent."""
+
+
+class WorkspaceNotInitialized(ValueError):
+    """Raised when no workspace exists at the given root."""
+
+
+class LedgerReferenceError(ValueError):
+    """Raised when an event references an unresolvable course/topic/competency
+    or a linkage target absent from the snapshot."""
+
+
+def _parse_dt(s):
+    """Parse ISO datetime, always timezone-aware.
+
+    Handles 'Z' suffix for Python 3.9 compatibility (fromisoformat only
+    supports 'Z' natively from Python 3.11+).
+    """
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    return dt.datetime.fromisoformat(s)
+
+
+def load_retention_policy(courses_root=None):
+    """Merge user-tunable policy from Courses/.learnprint/config.json over defaults.
+
+    Changing the policy re-evaluates state without rewriting evidence.
+    """
+    policy = {"min_elapsed_hours": RETENTION_POLICY["min_elapsed_hours"],
+              "intervals_days": list(RETENTION_POLICY["intervals_days"])}
+    if courses_root is not None:
+        cfg = Path(courses_root) / ".learnprint" / "config.json"
+        if cfg.exists():
             try:
-                t=dt.datetime.fromisoformat(due)
-                if t.tzinfo is not None and t<=now: status="retention_due"
-            except ValueError: pass
-        results.append({"id":c["id"],"name":c["name"],"status":status,"observations":len(ev),"independent_pass_application":application,"independent_pass_transfer":transfer,"delayed_pass":bool(delayed)})
-    denominator=len(results)
-    eligible=sum(x["status"] in {"demonstrated", "maintained", "retention_due"} for x in results)
-    maintained=sum(x["status"] == "maintained" for x in results)
-    return {"topic_id":topic["topic_id"], "bounded_competencies":denominator,
-            "observed_immediate_coverage_percent":round(eligible/denominator*100,1) if denominator else None,
-            "observed_maintained_percent":round(maintained/denominator*100,1) if denominator else None,
-            "important_note":"These metrics require human-reviewed recorded answers and do not assert permanent whole-field mastery.",
-            "competencies":results}
+                user = json.loads(cfg.read_text(encoding="utf-8"))
+            except (ValueError, OSError):
+                return policy
+            if isinstance(user.get("min_elapsed_hours"), (int, float)) and user["min_elapsed_hours"] > 0:
+                policy["min_elapsed_hours"] = user["min_elapsed_hours"]
+            if isinstance(user.get("intervals_days"), list) and user["intervals_days"]:
+                policy["intervals_days"] = list(user["intervals_days"])
+    return policy
+
+
+def _validate_references(topic, topic_events, ledger_ids):
+    """Fail closed on unresolvable references (plan Step 4.4/C1)."""
+    scope_ids = {c["id"] for c in topic.get("learning_scope", [])}
+    for e in topic_events:
+        if e.get("competency_id") not in scope_ids:
+            raise LedgerReferenceError(
+                f"event {e.get('event_id')!r} references unknown competency "
+                f"{e.get('competency_id')!r} for topic {topic.get('topic_id')!r}")
+    for e in topic_events:
+        for link in ("confirms_event_id", "corrects_event_id", "corroborates_event_id"):
+            target = e.get(link)
+            if target is not None and target not in ledger_ids:
+                raise LedgerReferenceError(
+                    f"event {e.get('event_id')!r}: dangling {link} {target!r}")
+
+
+def _evaluate_competency(c, ev_sorted, ledger, now, policy):
+    """Single canonical evaluator. Returns (status, detail).
+
+    ev_sorted: this competency's schema-valid events, sorted by
+    (_parse_dt(date), event_id). ledger: full validated snapshot (basis
+    linkage). now: timezone-aware datetime. policy: retention policy dict.
+    """
+    corrections = {}
+    for x in ledger:
+        if (x.get("task_type") == "correction" and x.get("corrects_event_id")
+                and isinstance(x.get("rubric"), dict)):
+            corrections[x["corrects_event_id"]] = x["rubric"]
+
+    def rub(x):
+        return corrections.get(x["event_id"], x.get("rubric") or {})
+
+    independent = [x for x in ev_sorted if is_observed_unassisted(x)]
+    if not ev_sorted:
+        return ("unknown", {"app_ok": False, "transfer_ok": False,
+                            "delayed_pass": False, "basis": "provisional",
+                            "cycle_start": None, "fresh_due_at": None,
+                            "interval_days": None,
+                            "latest": {"independent_application": None,
+                                       "novel_transfer": None,
+                                       "delayed_retrieval": None}})
+
+    latest = {"independent_application": None,
+              "novel_transfer": None, "delayed_retrieval": None}
+    for x in reversed(independent):
+        if latest[x["task_type"]] is None:
+            latest[x["task_type"]] = x
+        if all(latest.values()):
+            break
+
+    latest_app = latest["independent_application"]
+    latest_transfer = latest["novel_transfer"]
+    latest_delayed = latest["delayed_retrieval"]
+    app_ok = (latest_app is not None and rub(latest_app).get("application") == 2)
+    transfer_ok = (latest_transfer is not None
+                   and rub(latest_transfer).get("transfer") == 2
+                   and (latest_app is None
+                        or _parse_dt(latest_transfer["date"]) >= _parse_dt(latest_app["date"])))
+    demonstrated = app_ok and transfer_ok
+
+    cycle_start = (max(_parse_dt(latest_app["date"]), _parse_dt(latest_transfer["date"]))
+                   if demonstrated else None)
+    delayed_pass = False
+    if not demonstrated:
+        status = "emerging"
+    elif latest_delayed is None or _parse_dt(latest_delayed["date"]) < cycle_start:
+        status = "demonstrated"
+    elif (rub(latest_delayed).get("concept") == 2
+          and rub(latest_delayed).get("application") == 2):
+        elapsed = _parse_dt(latest_delayed["date"]) - cycle_start
+        if elapsed < dt.timedelta(hours=policy["min_elapsed_hours"]):
+            status = "demonstrated"
+        else:
+            status = "maintained"
+            delayed_pass = True
+    else:
+        status = "needs_review"
+
+    fresh_due, interval_days = None, None
+    if demonstrated:
+        passed_delayed = sum(
+            1 for e in independent
+            if e["task_type"] == "delayed_retrieval"
+            and _parse_dt(e["date"]) >= cycle_start
+            and rub(e).get("concept") == 2
+            and rub(e).get("application") == 2
+            and (_parse_dt(e["date"]) - cycle_start).total_seconds()
+                >= policy["min_elapsed_hours"] * 3600)
+        failed_latest = (
+            latest_delayed is not None
+            and _parse_dt(latest_delayed["date"]) >= cycle_start
+            and (rub(latest_delayed).get("concept") != 2
+                 or rub(latest_delayed).get("application") != 2))
+        intervals = policy["intervals_days"]
+        interval_days = 1 if failed_latest else intervals[min(passed_delayed, 3)]
+        last_eligible = independent[-1]
+        fresh_due = _parse_dt(last_eligible["date"]) + dt.timedelta(days=interval_days)
+
+    if status in {"demonstrated", "maintained"} and fresh_due is not None and fresh_due <= now:
+        status = "retention_due"
+
+    basis = evidence_basis(independent, ledger) if demonstrated else "provisional"
+    return (status, {"app_ok": app_ok, "transfer_ok": transfer_ok,
+                     "delayed_pass": delayed_pass, "basis": basis,
+                     "cycle_start": cycle_start.isoformat() if cycle_start else None,
+                     "fresh_due_at": fresh_due.isoformat() if fresh_due else None,
+                     "interval_days": interval_days,
+                     "latest": {k: (v["event_id"] if v else None)
+                                for k, v in latest.items()}})
+
+
+def progress(topic, events, now=None, policy=None, registry=None):
+    """Evidence-derived progress over one canonical evaluation per competency."""
+    now = now or dt.datetime.now(dt.timezone.utc)
+    policy = policy or RETENTION_POLICY
+    ledger = events
+    ledger_ids = {e.get("event_id") for e in ledger if isinstance(e, dict)}
+    by_comp = {}
+    for e in ledger:
+        if e.get("topic_id") != topic.get("topic_id") or e.get("is_synthetic_example"):
+            continue
+        if validate_event(e):
+            continue
+        by_comp.setdefault(e["competency_id"], []).append(e)
+    _validate_references(topic, [e for v in by_comp.values() for e in v], ledger_ids)
+    if registry is not None:
+        course_ids = {c.get("course_id") for c in registry.get("courses", [])}
+        legacy_topics = {c.get("topic_id") for c in registry.get("courses", [])}
+        for v in by_comp.values():
+            for e in v:
+                cid = e.get("course_id")
+                if cid is not None and cid not in course_ids and e.get("topic_id") not in legacy_topics:
+                    raise LedgerReferenceError(
+                        f"event {e.get('event_id')!r} references unknown course {cid!r}")
+
+    results = []
+    for c in topic.get("learning_scope", []):
+        ev = sorted(by_comp.get(c["id"], []),
+                    key=lambda x: (_parse_dt(x["date"]), x["event_id"]))
+        status, detail = _evaluate_competency(c, ev, ledger, now, policy)
+        results.append({
+            "id": c["id"], "name": c["name"], "status": status,
+            "basis": detail["basis"],
+            "observations": len(ev),
+            "independent_pass_application": detail["app_ok"],
+            "independent_pass_transfer": detail["transfer_ok"],
+            "delayed_pass": detail["delayed_pass"],
+            "due_at": detail["fresh_due_at"],
+            "interval_days": detail["interval_days"],
+        })
+
+    denominator = len(results)
+    eligible = sum(x["status"] in {"demonstrated", "maintained", "retention_due"}
+                   for x in results)
+    maintained = sum(x["status"] == "maintained" for x in results)
+    basis_counts = {}
+    for x in results:
+        basis_counts[x["basis"]] = basis_counts.get(x["basis"], 0) + 1
+    return {
+        "topic_id": topic["topic_id"],
+        "bounded_competencies": denominator,
+        "observed_immediate_coverage_percent": round(eligible / denominator * 100, 1) if denominator else None,
+        "observed_maintained_percent": round(maintained / denominator * 100, 1) if denominator else None,
+        "coverage_basis": basis_counts,
+        "important_note": "States reflect agent-graded observed responses unless basis says otherwise. Provisional states guide learning; they are not proof of externally verified mastery.",
+        "competencies": results,
+    }
 
 
 def cmd_validate(a):
@@ -333,33 +522,50 @@ def cmd_new_topic(a):
     return 0
 
 
-def reviews_from_events(topics, events):
-    """Derive upcoming spaced checks; no claimed delivery/reminder."""
-    out=[]
+def reviews_from_events(topics, events, stored_reviews=None):
+    """Derive upcoming spaced checks from the canonical evaluator.
+
+    No cycle logic lives here: due date, interval, and cycle_start are read
+    from _evaluate_competency detail, never recomputed. Stored queue entries
+    whose cycle_start predates the fresh one are dropped (stale-queue
+    elimination). Extra informational fields (topic_id, reason,
+    based_on_event, delivery) are kept for backward compatibility.
+    """
+    ledger = events
+    now = dt.datetime.now(dt.timezone.utc)
+    out = []
     for topic in topics:
+        by_comp = {}
+        for e in ledger:
+            if e.get("topic_id") != topic["topic_id"] or e.get("is_synthetic_example"):
+                continue
+            if validate_event(e):
+                continue
+            by_comp.setdefault(e["competency_id"], []).append(e)
+        ledger_ids = {e.get("event_id") for e in ledger if isinstance(e, dict)}
+        _validate_references(topic, [e for v in by_comp.values() for e in v], ledger_ids)
         for c in topic.get("learning_scope", []):
-            relevant=[e for e in events if e.get("topic_id")==topic["topic_id"]
-                and e.get("competency_id")==c["id"]
-                and e.get("grader")=="human_reviewed"
-                and e.get("help_level")=="none"
-                and e.get("evidence_origin")=="observed_response"
-                and not e.get("is_synthetic_example") and not validate_event(e)]
-            applied=any(e["task_type"]=="independent_application" and e["rubric"].get("application")==2 for e in relevant)
-            transferred=any(e["task_type"]=="novel_transfer" and e["rubric"].get("transfer")==2 for e in relevant)
-            if not(applied and transferred): continue
-            last=max(relevant,key=lambda x:x["date"])
-            passed_delayed=sum(e["task_type"]=="delayed_retrieval" and
-                               e["rubric"].get("concept")==2 and e["rubric"].get("application")==2
-                               for e in relevant)
-            failed_latest=last["task_type"]=="delayed_retrieval" and (
-                last["rubric"].get("concept") != 2 or last["rubric"].get("application") != 2)
-            intervals=[1,3,7,21]
-            days=1 if failed_latest else intervals[min(passed_delayed,3)]
-            due=dt.datetime.fromisoformat(last["date"]) + dt.timedelta(days=days)
-            out.append({"topic_id":topic["topic_id"],"competency_id":c["id"],
-                        "due_at":due.isoformat(),"reason":"retrieval after observed independently assessed performance",
-                        "interval_days":days,"based_on_event":last["event_id"],"delivery":"manual; no automatic notification"})
-    return {"schema_version":"1.0","reviews":out}
+            ev = sorted(by_comp.get(c["id"], []),
+                        key=lambda x: (_parse_dt(x["date"]), x["event_id"]))
+            status, detail = _evaluate_competency(c, ev, ledger, now, RETENTION_POLICY)
+            if detail["cycle_start"] is None or detail["fresh_due_at"] is None:
+                continue
+            latest_dl_id = detail["latest"]["delayed_retrieval"]
+            last_eligible = ev[-1]["event_id"] if ev else None
+            out.append({"topic_id": topic["topic_id"], "competency_id": c["id"],
+                        "due_at": detail["fresh_due_at"],
+                        "reason": "retrieval after observed independently assessed performance",
+                        "interval_days": detail["interval_days"],
+                        "cycle_start": detail["cycle_start"],
+                        "basis": detail["basis"],
+                        "based_on_event": latest_dl_id or last_eligible,
+                        "delivery": "manual; no automatic notification"})
+
+    # Stale-queue elimination by construction: output contains ONLY freshly
+    # computed entries. Stored entries are never merged in, so a stored entry
+    # whose cycle_start predates the current cycle simply has no counterpart
+    # in the output. Stored due_at values are never read back into status.
+    return {"schema_version": "1.0", "reviews": out}
 
 
 def cmd_plan_reviews(a):

@@ -298,14 +298,17 @@ def evidence_basis(cycle_events, ledger):
         and e.get("evidence_origin") == "observed_response"
         for e in ledger
     )
-    sources = {e.get("grader_source") for e in cycle_events
-               if e.get("grader_source")}
     # Corroboration requires ALL of: explicit target linkage, same
     # course AND competency scope, the corroborator's own rubric
-    # evaluation of observed unassisted work, and a different source.
-    # A same-competency event from another course, an unlinked event, or
-    # an event without its own rubric NEVER counts — these are the exact
-    # false-substantiation paths this rule closes.
+    # evaluation of observed unassisted work, and a different source
+    # than the TARGET event (compared per-target, not per-cycle: a valid
+    # corroborator is itself cycle evidence, so whole-cycle comparison
+    # would make substantiation unreachable).
+    # A same-competency event from another course, an unlinked event,
+    # an event without its own rubric, or a same-source re-grade NEVER
+    # counts — these are the exact false-substantiation paths this rule
+    # closes.
+    by_id = {e.get("event_id"): e for e in ledger if isinstance(e, dict)}
     corroborated = any(
         e.get("task_type") in ("independent_application", "novel_transfer",
                                "delayed_retrieval")
@@ -315,9 +318,9 @@ def evidence_basis(cycle_events, ledger):
         and e.get("rubric") is not None
         and e.get("help_level") == "none"
         and e.get("evidence_origin") == "observed_response"
-        and e.get("grader_source") not in sources
         and e.get("grader_source") is not None
-        for e in ledger if e not in cycle_events
+        and e.get("grader_source") != (by_id.get(e.get("corroborates_event_id")) or {}).get("grader_source")
+        for e in ledger
     )
     if corroborated:
         return "substantiated"

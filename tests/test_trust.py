@@ -82,6 +82,15 @@ class TestTrustValidator(unittest.TestCase):
         self.assertEqual(mod.validate_event(e), [])  # valid record...
         self.assertFalse(mod.is_observed_unassisted(e))  # ...but never demonstration evidence
 
+    def test_dangling_confirmation_raises(self):
+        t = {"schema_version": "1.0", "topic_id": "t", "goal": "g",
+             "learning_scope": [{"id": "c1", "name": "C1", "status": "unknown",
+                                 "evidence_ids": [], "due_at": None}],
+             "syllabus": [], "question_parking_lot": [], "sources": [], "last_session": None}
+        e = [base_event(task_type="confirmation", confirms_event_id="ghost")]
+        with self.assertRaises(mod.LedgerReferenceError):
+            mod.progress(t, e)
+
     def test_sources_entry_requires_status(self):
         p = mod.load(ROOT / "templates/topic-state.json")
         p["sources"] = [{"claim": "water boils at 90C"}]
