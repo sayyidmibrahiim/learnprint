@@ -1322,6 +1322,162 @@ def cmd_course_plan_reviews(a):
     return 0
 
 
+def cmd_migrate(a):
+    import hashlib as _hl
+    src = Path(a.migrate_from).expanduser().resolve()
+    dest = Path(a.migrate_to).expanduser().resolve()
+    if not getattr(a, "approve", False):
+        raise ValueError("Explicit approval required: --approve")
+    if not (src / "manifest.json").exists():
+        raise ValueError(f"Not a my-learning workspace (no manifest.json): {src}")
+
+    def sha(p):
+        return _hl.sha256(Path(p).read_bytes()).hexdigest()
+
+    # Phase 1: VALIDATE (read-only, fails fast)
+    manifest = json.loads((src / "manifest.json").read_text(encoding="utf-8"))
+    profile = json.loads((src / manifest.get("profile_path", "learner/profile.json")).read_text(encoding="utf-8"))
+    if validate_profile(profile):
+        raise ValueError("Invalid source profile")
+    events_raw = (src / manifest.get("events_path", "events.jsonl")).read_bytes()
+    events = []
+    for i, line in enumerate(events_raw.decode("utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            e = json.loads(line)
+        except ValueError:
+            raise ValueError(f"source events.jsonl line {i}: malformed; repair source first")
+        if validate_event(e):
+            raise ValueError(f"source event {i} invalid; repair source first")
+        events.append(e)
+    topics = []
+    topics_dir = src / manifest.get("topics_dir", "topics")
+    for sp in sorted(topics_dir.glob("*/state.json")):
+        t = json.loads(sp.read_text(encoding="utf-8"))
+        if validate_topic(t):
+            raise ValueError(f"source topic invalid: {sp}")
+        topics.append((sp.parent.name, t))
+    topic_ids = {t["topic_id"] for _, t in topics}
+    for e in events:
+        if e.get("topic_id") not in topic_ids:
+            raise ValueError(f"source event references unknown topic: {e.get('topic_id')}")
+    reviews = json.loads((src / manifest.get("reviews_path", "reviews.json")).read_text(encoding="utf-8"))
+    if a.dry_run:
+        print(f"DRY RUN: would migrate {len(topics)} topics, {len(events)} events to {dest}")
+        return 0
+
+    lp = dest / ".learnprint"
+    staging = lp / ".migrate-staging"
+    # Destination foreign-ledger guard (no automatic merges).
+    dest_ledger = lp / "events.jsonl"
+    if dest_ledger.exists() and dest_ledger.stat().st_size > 0:
+        if sha(dest_ledger) != sha(src / manifest.get("events_path", "events.jsonl")):
+            raise ValueError("Destination has a foreign event ledger. Merging is not supported automatically.")
+
+    with workspace_lock(dest):
+        registry = registry_read(dest)
+        already = {c.get("topic_id"): c.get("course_id") for c in registry.get("courses", [])
+                   if c.get("topic_id")}
+        # Interrupted staging without completion marker: clean restart.
+        if staging.exists() and not (staging / "STAGE_COMPLETE.json").exists():
+            shutil.rmtree(staging)
+            print("Cleaned interrupted staging area; restarting.")
+        staging.mkdir(parents=True, exist_ok=True)
+        map_path = staging / "migration-map.json"
+        if map_path.exists():
+            migration_map = json.loads(map_path.read_text(encoding="utf-8"))
+        else:
+            migration_map = {}
+        # Phase 2: STAGE — allocate stable IDs first, persist map immediately.
+        for dirname, t in topics:
+            tid = t["topic_id"]
+            if tid in already:
+                print(f"already migrated: {tid}; skipping")
+                continue
+            if tid not in migration_map:
+                migration_map[tid] = routing.allocate_course_id(registry)
+                atomic_write(map_path, json.dumps(migration_map, indent=2) + "\n")
+        category = getattr(a, "category", None) or "life/imported"
+        staged_courses = []
+        used_slugs = set()
+        for dirname, t in topics:
+            tid = t["topic_id"]
+            if tid in already:
+                continue
+            slug = re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", tid.lower())).strip("-") or "topic"
+            base, n = slug, 1
+            while slug in used_slugs:
+                n += 1
+                slug = f"{base}-migrated-{n}"
+            used_slugs.add(slug)
+            cdir = staging / "courses" / category / slug
+            cdir.mkdir(parents=True, exist_ok=True)
+            for name in ("SYLLABUS.md", "MAP.mmd", "HANDOFF.md", "README.md"):
+                src_file = topics_dir / dirname / name
+                if src_file.exists():
+                    shutil.copyfile(src_file, cdir / name)
+                else:
+                    (cdir / name).write_text(f"# {tid}\n", encoding="utf-8")
+            state = dict(t)
+            state["course_id"] = migration_map[tid]
+            (cdir / "state.json").write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+                                             encoding="utf-8")
+            staged_courses.append((tid, category, slug))
+        (staging / "profile.json").write_text(json.dumps(profile, ensure_ascii=False, indent=2) + "\n",
+                                              encoding="utf-8")
+        src_events = src / manifest.get("events_path", "events.jsonl")
+        shutil.copyfile(src_events, staging / "events.jsonl")
+        if sha(staging / "events.jsonl") != sha(src_events):
+            raise ValueError("Staged events checksum mismatch; aborting")
+        shutil.copyfile(src / manifest.get("reviews_path", "reviews.json"), staging / "reviews.json")
+        atomic_write(staging / "STAGE_COMPLETE.json", json.dumps(
+            {"topics": len(staged_courses), "events": len(events),
+             "events_sha256": sha(staging / "events.jsonl")}, indent=2) + "\n")
+
+        # Phase 3: COMMIT — move staged files to final locations.
+        for tid, cat, slug in staged_courses:
+            final = dest / cat / slug
+            if final.exists():
+                continue  # idempotent retry after partial commit
+            final.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(str(staging / "courses" / cat / slug), str(final))
+            registry.setdefault("courses", []).append({
+                "course_id": migration_map[tid], "title": tid,
+                "normalized_title": routing.normalize_key(tid), "slug": slug,
+                "category_path": cat, "rel_path": f"{cat}/{slug}",
+                "aliases": [], "normalized_aliases": [],
+                "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                "last_activity": None, "classification_source": "imported",
+                "goal": next((t.get("goal", "") for _, t in topics if t["topic_id"] == tid), ""),
+                "topic_id": tid})
+        if not dest_ledger.exists() or dest_ledger.stat().st_size == 0:
+            shutil.copyfile(staging / "events.jsonl", dest_ledger)
+        prof_dest = lp / "learner" / "profile.json"
+        if not prof_dest.exists():
+            prof_dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(staging / "profile.json", prof_dest)
+        registry_write(dest, registry)
+        shutil.rmtree(staging, ignore_errors=True)
+
+    # Phase 4: VERIFY + activation marker.
+    final_events = (lp / "events.jsonl").read_bytes()
+    if _hl.sha256(final_events).hexdigest() != sha(src_events):
+        raise ValueError("Migrated events checksum mismatch")
+    final_registry = registry_read(dest)
+    for c in final_registry.get("courses", []):
+        if not (dest / c.get("rel_path", "") / "state.json").exists():
+            raise ValueError(f"migrated course missing on disk: {c.get('rel_path')}")
+    atomic_write(lp / "migration-report.json", json.dumps(
+        {"source": str(src), "source_sha256": sha(src_events),
+         "mapping": {tid: migration_map.get(tid) for _, t in topics for tid in [t["topic_id"]]},
+         "topics": len(topics), "events": len(events),
+         "migrated_at": dt.datetime.now(dt.timezone.utc).isoformat()},
+        ensure_ascii=False, indent=2) + "\n")
+    print(f"MIGRATED {len(topics)} topics, {len(events)} events. Source preserved at {src}.")
+    return 0
+
+
 def cmd_validate(a):
     p=load(a.profile)
     err=validate_profile(p)
@@ -1640,6 +1796,10 @@ def main():
     pr=cs.add_parser("plan-reviews");pr.add_argument("--approve",action="store_true")
     pr.add_argument("--dry-run",action="store_true");pr.add_argument("--courses-root")
     pr.set_defaults(func=cmd_course_plan_reviews)
+    mg=sub.add_parser("migrate");mg.add_argument("--from",dest="migrate_from",required=True)
+    mg.add_argument("--to",dest="migrate_to",required=True);mg.add_argument("--category",default=None)
+    mg.add_argument("--approve",action="store_true");mg.add_argument("--dry-run",action="store_true")
+    mg.set_defaults(func=cmd_migrate)
     a=p.parse_args()
     try: return a.func(a)
     except (OSError,ValueError,KeyError,TypeError,json.JSONDecodeError) as e:
