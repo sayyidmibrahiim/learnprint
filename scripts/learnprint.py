@@ -801,6 +801,246 @@ def resolve_effective_profile(local_path):
     return load(ROOT / "profiles/founder-default.json"), "founder_fallback_missing"
 
 
+try:
+    import learnprint_routing as routing
+except ImportError:  # loaded via spec without scripts/ on sys.path (tests)
+    import importlib.util as _ilu
+    _spec = _ilu.spec_from_file_location(
+        "learnprint_routing", Path(__file__).resolve().parent / "learnprint_routing.py")
+    routing = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(routing)
+
+
+def validate_path(proposed_path, courses_root):
+    """Deterministic path safety (plan Step 5.1). Returns (valid, error)."""
+    courses = Path(courses_root).resolve()
+    if os.path.isabs(proposed_path):
+        return False, "Absolute paths not allowed"
+    normalized = proposed_path.replace("\\", "/")
+    for part in normalized.split("/"):
+        if part in ("..", ".") or part.startswith("~"):
+            return False, "Path traversal not allowed"
+    invalid = set("<>:\"|?*") | {chr(c) for c in range(0, 32)}
+    for part in Path(proposed_path).parts:
+        if any(ch in invalid for ch in part):
+            return False, f"Invalid character in path component: {part}"
+        if part != part.strip(". "):
+            return False, f"Trailing dots/spaces in component: {part}"
+    full = (courses / proposed_path).resolve()
+    try:
+        full.relative_to(courses)
+    except ValueError:
+        return False, "Path escapes courses root (possibly via symlink/junction)"
+    reserved = {"CON", "PRN", "AUX", "NUL"} | {f"COM{i}" for i in range(1, 10)} | {f"LPT{i}" for i in range(1, 10)}
+    for part in full.relative_to(courses).parts:
+        if part.split(".")[0].upper() in reserved:
+            return False, f"Windows reserved name: {part}"
+    rel_parts = full.relative_to(courses).parts
+    for i in range(1, len(rel_parts) + 1):
+        part_path = courses.joinpath(*rel_parts[:i])
+        parent = part_path.parent
+        target = part_path.name.lower()
+        if parent.exists():
+            existing = {p.name.lower(): p.name for p in parent.iterdir() if p.is_dir()}
+            if target in existing and existing[target] != part_path.name:
+                return False, f"Case collision: '{part_path.name}' vs existing '{existing[target]}'"
+    if len(rel_parts) > 6:
+        return False, f"Path too deep ({len(rel_parts)} > 6 levels)"
+    for part in rel_parts:
+        if len(part) > 100:
+            return False, f"Component too long: {len(part)} chars"
+    return True, ""
+
+
+def registry_path(courses_root):
+    return Path(courses_root) / ".learnprint" / "registry.json"
+
+
+def registry_read(courses_root):
+    p = registry_path(courses_root)
+    if not p.exists():
+        return {"schema_version": "1.0", "courses": [], "active_course_id": None}
+    data = json.loads(p.read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or not isinstance(data.get("courses"), list):
+        raise ValueError(f"registry corrupt: {p}")
+    return data
+
+
+def registry_write(courses_root, registry):
+    """Backup-then-write under the caller's lock (plan Step 4.6)."""
+    d = Path(courses_root) / ".learnprint"
+    d.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(registry, ensure_ascii=False, indent=2) + "\n"
+    atomic_write(d / "registry.json.bak", payload)
+    atomic_write(d / "registry.json", payload)
+
+
+def _cname(course_id):
+    return (course_id or "")[:8]
+
+
+def course_resolve(courses_root, query):
+    """Registry lookup: found / ambiguous / not_found (never guesses)."""
+    return routing.resolve_course(query, registry_read(courses_root))
+
+
+def course_create(courses_root, category_path, title, goal, aliases=(),
+                  confirm_new_segments=(), classification_source="agent"):
+    """Create a course: gate → collision checks → directories → registry.
+
+    Revalidates the gate on a FRESH registry read inside the workspace lock,
+    so a competing session creating the same category first converges to
+    safe reuse (never a silent duplicate). New events for this course use
+    topic_id = course_id (stable key); registry topic_id stays null unless
+    set by migration.
+    """
+    root = Path(courses_root)
+    with workspace_lock(root):
+        registry = registry_read(root)
+        ok, gate = routing.validate_classification(category_path, registry)
+        if not ok:
+            raise ValueError(gate)
+        if gate.get("verdict") == "new-needs-confirmation":
+            required = {v["segment"] for v in gate["segments"]
+                        if v["verdict"] == "new-needs-confirmation"}
+            missing = required - set(confirm_new_segments or ())
+            if missing:
+                raise ValueError(
+                    "new category segments need explicit confirmation: "
+                    f"{sorted(missing)}")
+        resolved_path = gate["resolved_path"]
+        valid, err = validate_path(resolved_path, root)
+        if not valid:
+            raise ValueError(f"invalid category path: {err}")
+        # Structural invariant: a category path must never land exactly on
+        # an existing COURSE directory (no silent course<->category flips).
+        for c in registry.get("courses", []):
+            existing_dir = Path(c.get("rel_path", ""))
+            if existing_dir.as_posix() == resolved_path:
+                raise ValueError(
+                    f"category path collides with existing course directory: {resolved_path}")
+        slug = routing.slugify(title)
+        rel = (Path(resolved_path) / slug).as_posix()
+        for c in registry.get("courses", []):
+            if (c.get("category_path") == resolved_path
+                    and c.get("slug", "").lower() == slug.lower()):
+                raise ValueError(
+                    f"course slug collision in category: {rel}")
+        norm_title = routing.normalize_key(title)
+        for c in registry.get("courses", []):
+            if (c.get("category_path") == resolved_path
+                    and c.get("normalized_title") == norm_title):
+                raise ValueError(
+                    f"course already exists in category ({c.get('course_id')}); refusing duplicate")
+        norm_aliases = [routing.normalize_key(a) for a in (aliases or [])]
+        for a, na in zip(aliases or [], norm_aliases):
+            for c in registry.get("courses", []):
+                if na in c.get("normalized_aliases", []):
+                    raise ValueError(
+                        f"alias {a!r} already owned by course {c.get('course_id')} "
+                        f"({_cname(c.get('course_id'))}); ask the user which course was meant")
+        course_dir = root / rel
+        adopted = False
+        if course_dir.exists():
+            if (course_dir / "state.json").exists():
+                adopted = True  # crash-recovery: orphan dir, register it
+            else:
+                raise ValueError(f"Refusing to overwrite: {course_dir}")
+        else:
+            course_dir.mkdir(parents=True)
+            (course_dir / "README.md").write_text(f"# {title}\n\nGoal: {goal}\n", encoding="utf-8")
+            (course_dir / "SYLLABUS.md").write_text(f"# {title} — syllabus\n", encoding="utf-8")
+            (course_dir / "MAP.mmd").write_text("flowchart TD\n", encoding="utf-8")
+            (course_dir / "HANDOFF.md").write_text(f"# Handoff — {title}\n", encoding="utf-8")
+            (course_dir / "state.json").write_text(json.dumps(
+                {"schema_version": "1.0", "course_id": None, "goal": goal,
+                 "learning_scope": [], "sources": []}, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8")
+        course_id = routing.allocate_course_id(registry)
+        entry = {
+            "course_id": course_id,
+            "title": title,
+            "normalized_title": norm_title,
+            "slug": slug,
+            "category_path": resolved_path,
+            "rel_path": rel,
+            "aliases": list(aliases or []),
+            "normalized_aliases": norm_aliases,
+            "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "last_activity": None,
+            "classification_source": classification_source,
+            "goal": goal,
+            "topic_id": None,
+        }
+        registry.setdefault("courses", []).append(entry)
+        registry_write(root, registry)
+        state_path = course_dir / "state.json"
+        try:
+            st = json.loads(state_path.read_text(encoding="utf-8"))
+            st["course_id"] = course_id
+            state_path.write_text(json.dumps(st, ensure_ascii=False, indent=2) + "\n",
+                                  encoding="utf-8")
+        except (ValueError, OSError):
+            pass
+        entry["adopted_existing_dir"] = adopted
+        return entry
+
+
+def course_rename(courses_root, course_id, title, update_path=False):
+    """Rename: title only. course_id, topic_id, events untouched by construction."""
+    root = Path(courses_root)
+    with workspace_lock(root):
+        registry = registry_read(root)
+        entry = next((c for c in registry.get("courses", []) if c.get("course_id") == course_id), None)
+        if entry is None:
+            raise ValueError(f"unknown course_id: {course_id}")
+        entry["title"] = title
+        entry["normalized_title"] = routing.normalize_key(title)
+        if update_path:
+            slug = routing.slugify(title)
+            rel = (Path(entry["category_path"]) / slug).as_posix()
+            for c in registry.get("courses", []):
+                if c is not entry and c.get("rel_path") == rel:
+                    raise ValueError(f"rename target collides: {rel}")
+            os.replace(str(root / entry["rel_path"]), str(root / rel))
+            entry["slug"] = slug
+            entry["rel_path"] = rel
+        registry_write(root, registry)
+        return entry
+
+
+def course_move(courses_root, course_id, category_path, confirm_new_segments=()):
+    """Relocate: category_path + rel_path change. Identity and evidence stay valid."""
+    root = Path(courses_root)
+    with workspace_lock(root):
+        registry = registry_read(root)
+        entry = next((c for c in registry.get("courses", []) if c.get("course_id") == course_id), None)
+        if entry is None:
+            raise ValueError(f"unknown course_id: {course_id}")
+        ok, gate = routing.validate_classification(category_path, registry)
+        if not ok:
+            raise ValueError(gate)
+        if gate.get("verdict") == "new-needs-confirmation":
+            required = {v["segment"] for v in gate["segments"]
+                        if v["verdict"] == "new-needs-confirmation"}
+            missing = required - set(confirm_new_segments or ())
+            if missing:
+                raise ValueError(
+                    f"new category segments need explicit confirmation: {sorted(missing)}")
+        resolved_path = gate["resolved_path"]
+        rel = (Path(resolved_path) / entry["slug"]).as_posix()
+        for c in registry.get("courses", []):
+            if c is not entry and c.get("rel_path") == rel:
+                raise ValueError(f"move target collides: {rel}")
+        dest = root / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(str(root / entry["rel_path"]), str(dest))
+        entry["category_path"] = resolved_path
+        entry["rel_path"] = rel
+        registry_write(root, registry)
+        return entry
+
+
 def cmd_validate(a):
     p=load(a.profile)
     err=validate_profile(p)

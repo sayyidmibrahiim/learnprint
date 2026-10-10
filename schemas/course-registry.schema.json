@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["schema_version", "courses"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "courses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["course_id", "title", "slug", "category_path", "rel_path", "created_at"],
+        "properties": {
+          "course_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", "description": "UUIDv4, allocated once. Immutable. Never derived from title/category/path."},
+          "title": {"type": "string", "minLength": 1},
+          "normalized_title": {"type": "string", "description": "NFC + casefold + punctuation-stripped, for deterministic matching"},
+          "slug": {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$", "description": "Directory name, unique within category only"},
+          "category_path": {"type": "string", "description": "Normalized category path relative to courses_root"},
+          "rel_path": {"type": "string", "description": "Path relative to courses_root; changes on move"},
+          "aliases": {"type": "array", "items": {"type": "string"}, "default": []},
+          "normalized_aliases": {"type": "array", "items": {"type": "string"}, "default": [], "description": "Globally unique across all courses; enforced by registry"},
+          "created_at": {"type": "string", "format": "date-time"},
+          "last_activity": {"type": ["string", "null"], "format": "date-time"},
+          "classification_source": {"enum": ["user", "agent", "imported"]},
+          "goal": {"type": "string"},
+          "topic_id": {"type": ["string", "null"], "description": "Legacy topic_id preserved verbatim so pre-migration events remain resolvable"}
+        }
+      }
+    },
+    "active_course_id": {"type": ["string", "null"]}
+  }
+}

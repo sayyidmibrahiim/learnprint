@@ -1002,7 +1002,10 @@ def validate_classification(category_path, registry, *, allow_new_top=False):
         return (False, f"category depth {len(segs)} exceeds {MAX_CATEGORY_DEPTH}")
 
     root = segs[0]
-    if root not in CANONICAL_CATEGORIES and not allow_new_top:
+    root_names = {normalize_key(k) for k in CANONICAL_CATEGORIES}
+    root_names |= {normalize_key(a) for meta in CANONICAL_CATEGORIES.values()
+                   for a in meta.get("aliases", [])}
+    if normalize_key(root) not in root_names and not allow_new_top:
         return (False, f"unknown top-level category '{root}'; "
                        f"known: {sorted(CANONICAL_CATEGORIES)}. "
                        f"Proposing a new root requires --approve-new-category "
