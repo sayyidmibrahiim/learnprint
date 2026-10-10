@@ -486,5 +486,125 @@ class TestCCliGates(unittest.TestCase):
             self.assertEqual(r.returncode, 2)
 
 
+class TestDWindowsPaths(unittest.TestCase):
+    def test_reserved_names_rejected(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            for bad in ("languages/CON", "languages/NUL.txt", "languages/COM1/stuff"):
+                valid, err = mod.validate_path(bad, Path(d))
+                self.assertFalse(valid, bad)
+                self.assertTrue(err)
+
+    def test_case_collision_detected(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "Grammar").mkdir()
+            valid, err = mod.validate_path("Grammar", Path(d))
+            self.assertTrue(valid)
+            (Path(d) / "other").mkdir()
+            valid, err = mod.validate_path("OTHER", Path(d))
+            self.assertFalse(valid)
+            self.assertIn("collision", err.lower())
+
+    def test_trailing_dots_spaces_rejected(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            for bad in ("languages/english.", "languages/eng /x"):
+                valid, err = mod.validate_path(bad, Path(d))
+                self.assertFalse(valid, bad)
+
+    def test_backslash_segment_rejected(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            valid, err = mod.validate_path("languages\\english", Path(d))
+            self.assertFalse(valid)
+
+    def test_unicode_title_creates_usable_course(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(d)
+            entry = mod.course_create(root, "languages/japanese/grammar",
+                                       "は particle", "g", (), ("japanese", "grammar"))
+            self.assertTrue((root / entry["rel_path"] / "state.json").exists())
+            st = json.loads((root / entry["rel_path"] / "state.json").read_text(encoding="utf-8"))
+            self.assertEqual(st["course_id"], entry["course_id"])
+
+    def test_atomic_write_failure_leaves_no_temp(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            ghost = Path(d) / "no-such-dir" / "f.json"
+            with self.assertRaises((OSError, ValueError)):
+                mod.atomic_write(ghost, "{}")
+            leftovers = list(Path(d).rglob("*.tmp"))
+            self.assertEqual(leftovers, [])
+
+    def test_concurrent_appends_lose_nothing(self):
+        import tempfile, threading
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(d)
+            lp = root / ".learnprint" / "events.jsonl"
+            barrier = threading.Barrier(4)
+            errors = []
+
+            def worker(n):
+                try:
+                    barrier.wait(timeout=10)
+                    for i in range(5):
+                        mod.append_event_line(
+                            lp, json.dumps(valid_event(f"w{n}-{i}")))
+                except Exception as exc:  # noqa: BLE001 — asserted empty
+                    errors.append(exc)
+
+            threads = [threading.Thread(target=worker, args=(n,)) for n in range(4)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=60)
+            self.assertEqual(errors, [])
+            recs = mod.ledger_read_trusted(lp, workspace_root=root)
+            self.assertEqual(len(recs), 20)
+            ids = [r["event_id"] for r in recs]
+            self.assertEqual(len(set(ids)), 20)
+
+    def test_concurrent_cli_records_both_land(self):
+        """Two separate OS processes recording at once: the advisory
+        workspace lock serializes them — no lost events, no duplicates."""
+        import tempfile, threading
+        with tempfile.TemporaryDirectory() as d:
+            root = str(Path(d) / "Courses")
+            self.assertEqual(
+                _cli("course", "init", "--courses-root", root, "--approve").returncode, 0)
+            r = _cli("course", "create", "--courses-root", root,
+                     "--category", "languages/english/grammar",
+                     "--title", "in on at", "--goal", "g",
+                     "--confirm-new-segment", "english",
+                     "--confirm-new-segment", "grammar", "--approve")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            cid = json.loads(r.stdout)["course_id"]
+            barrier = threading.Barrier(2)
+            results = []
+
+            def record(n):
+                barrier.wait(timeout=30)
+                results.append(_cli(
+                    "record", "--workspace", root, "--event-id", f"conc-{n}",
+                    "--topic", cid, "--competency", "c1",
+                    "--task-type", "independent_application",
+                    "--answer", "a", "--rubric", '{"application": 2}',
+                    "--expected", "r", "--feedback", "f",
+                    "--course-id", cid, "--approve"))
+
+            threads = [threading.Thread(target=record, args=(n,)) for n in range(2)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=120)
+            for res in results:
+                self.assertEqual(res.returncode, 0, res.stderr)
+            lp = Path(root) / ".learnprint" / "events.jsonl"
+            recs = mod.ledger_read_trusted(lp, workspace_root=Path(root))
+            self.assertEqual({r["event_id"] for r in recs}, {"conc-0", "conc-1"})
+
+
 if __name__ == "__main__":
     unittest.main()

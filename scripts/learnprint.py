@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import sys
+import threading
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -124,11 +125,20 @@ def _write_all(fd, data: bytes) -> None:
         view = view[n:]
 
 
+_APPEND_MUTEX = threading.Lock()
+
+
 def append_event_line(path, line: str, durable: bool = True) -> None:
     """Crash-safe single-line append to a JSONL ledger.
 
     Payload + trailing newline go out as ONE write so an interrupted append
     cannot produce a record without its terminator.
+
+    Same-process threads are serialized by an intra-process mutex: on
+    Windows the CRT implements O_APPEND as seek-then-write, which loses
+    whole same-length records under concurrent handles. Cross-PROCESS
+    safety still requires the caller to hold workspace_lock() (advisory);
+    every CLI mutator does.
     """
     path = Path(path)
     payload = (line + "\n").encode("utf-8")
@@ -145,13 +155,14 @@ def append_event_line(path, line: str, durable: bool = True) -> None:
                 f"ledger {path}: final record missing terminal newline; "
                 "append refused (would merge two events). "
                 "Run course repair-evidence, then retry.")
-    fd = os.open(str(path), flags, 0o600)
-    try:
-        _write_all(fd, payload)
-        if durable:
-            os.fsync(fd)
-    finally:
-        os.close(fd)
+    with _APPEND_MUTEX:
+        fd = os.open(str(path), flags, 0o600)
+        try:
+            _write_all(fd, payload)
+            if durable:
+                os.fsync(fd)
+        finally:
+            os.close(fd)
 
 
 def _fsync_dir(directory) -> None:
@@ -889,6 +900,8 @@ def validate_path(proposed_path, courses_root):
     courses = Path(courses_root).resolve()
     if os.path.isabs(proposed_path):
         return False, "Absolute paths not allowed"
+    if "\\" in proposed_path:
+        return False, "Backslash not allowed: use '/' separators for category paths"
     normalized = proposed_path.replace("\\", "/")
     for part in normalized.split("/"):
         if part in ("..", ".") or part.startswith("~"):
@@ -908,7 +921,10 @@ def validate_path(proposed_path, courses_root):
     for part in full.relative_to(courses).parts:
         if part.split(".")[0].upper() in reserved:
             return False, f"Windows reserved name: {part}"
-    rel_parts = full.relative_to(courses).parts
+    # Collision walk uses the PROPOSED casing, not the resolved one: on a
+    # case-insensitive filesystem resolve() canonicalizes "OTHER" to an
+    # existing "other", which would mask the collision this check exists for.
+    rel_parts = tuple(s for s in normalized.split("/") if s not in ("",))
     for i in range(1, len(rel_parts) + 1):
         part_path = courses.joinpath(*rel_parts[:i])
         parent = part_path.parent
