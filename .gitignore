@@ -4,6 +4,13 @@ my-learning/
 learner-data/
 local-learning/
 *.private.json
+# Courses/ workspace: entire private learning tree (plan Stage 5.4)
+Courses/
+# Personal skill artifacts if installed to repo-root discovery paths
+.agents/skills/learnprint-personal/
+.claude/skills/learnprint-personal/
+.kiro/skills/learnprint-personal/
+.gemini/skills/learnprint-personal/
 .DS_Store
 __pycache__/
 *.pyc
