@@ -655,5 +655,29 @@ class TestEWorkspaceAcceptance(unittest.TestCase):
             self.assertNotIn("c1: due", due_section)
 
 
+class TestGPathContainment(unittest.TestCase):
+    def test_move_traversal_refused_without_escape(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(d)
+            c = mod.course_create(**create_kwargs(root))
+            with self.assertRaises(ValueError):
+                mod.course_move(root, c["course_id"], "languages/../evil",
+                                ("..", "evil"))
+            # Nothing escaped the workspace root.
+            self.assertFalse((Path(d) / "evil").exists())
+            reg = mod.registry_read(root)
+            self.assertEqual(reg["courses"][0]["category_path"],
+                             "languages/english/grammar")
+
+    def test_move_absolute_path_refused(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(d)
+            c = mod.course_create(**create_kwargs(root))
+            with self.assertRaises(ValueError):
+                mod.course_move(root, c["course_id"], "/tmp/evil", ())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1192,6 +1192,9 @@ def course_rename(courses_root, course_id, title, update_path=False):
             for c in registry.get("courses", []):
                 if c is not entry and c.get("rel_path") == rel:
                     raise ValueError(f"rename target collides: {rel}")
+            valid, err = validate_path(rel, root)
+            if not valid:
+                raise ValueError(f"invalid rename target path: {err}")
             os.replace(str(root / entry["rel_path"]), str(root / rel))
             entry["slug"] = slug
             entry["rel_path"] = rel
@@ -1218,6 +1221,9 @@ def course_move(courses_root, course_id, category_path, confirm_new_segments=())
                 raise ValueError(
                     f"new category segments need explicit confirmation: {sorted(missing)}")
         resolved_path = gate["resolved_path"]
+        valid, err = validate_path(resolved_path, root)
+        if not valid:
+            raise ValueError(f"invalid category path: {err}")
         rel = (Path(resolved_path) / entry["slug"]).as_posix()
         for c in registry.get("courses", []):
             if c is not entry and c.get("rel_path") == rel:
