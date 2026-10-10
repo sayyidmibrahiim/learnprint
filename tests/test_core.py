@@ -128,6 +128,87 @@ class TestCore(unittest.TestCase):
             mod.cmd_init(type("Args",(),{"workspace":str(w)})())
             with self.assertRaises(ValueError): mod.cmd_generate(type("Args",(),{"workspace":str(w),"approve":True})())
 
+    def test_profile_precedence_assessed_over_founder(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            local = Path(d)/"profile.json"
+            prof = mod.load(ROOT/"profiles/founder-default.json")
+            prof["public_template"] = False
+            prof["assessment_status"] = "assessed"
+            mod.dump(local, prof)
+            p, source = mod.resolve_effective_profile(local)
+            self.assertEqual(source, "local")
+            self.assertFalse(p["public_template"])
+
+    def test_profile_precedence_provisional_over_founder(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            local = Path(d)/"profile.json"
+            prof = mod.load(ROOT/"templates/learner-profile-starter.json")
+            prof["assessment_status"] = "provisional"
+            mod.dump(local, prof)
+            p, source = mod.resolve_effective_profile(local)
+            self.assertEqual(source, "local")
+
+    def test_profile_precedence_unassessed_uses_founder_prefs(self):
+        p, source = mod.resolve_effective_profile(ROOT/"templates/learner-profile-starter.json")
+        self.assertTrue(source.startswith("founder_fallback"))
+        self.assertTrue(p["public_template"])
+
+    def test_profile_precedence_missing_uses_founder(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            p, source = mod.resolve_effective_profile(Path(d)/"nope.json")
+            self.assertEqual(source, "founder_fallback_missing")
+            self.assertTrue(p["public_template"])
+
+    def test_profile_precedence_invalid_uses_founder(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            local = Path(d)/"profile.json"
+            local.write_text('{"broken": true}', encoding="utf-8")
+            p, source = mod.resolve_effective_profile(local)
+            self.assertTrue(source.startswith("founder_fallback"))
+            self.assertTrue(p["public_template"])
+
+    def test_personal_skill_optional_for_personalization(self):
+        # Personalization works through direct profile read; no generated
+        # skill needs to exist or be installed (plan Step 2.2, capability 1).
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            local = Path(d)/"profile.json"
+            prof = mod.load(ROOT/"profiles/founder-default.json")
+            prof["public_template"] = False
+            prof["assessment_status"] = "assessed"
+            mod.dump(local, prof)
+            p, source = mod.resolve_effective_profile(local)
+            self.assertEqual(source, "local")
+            self.assertFalse((Path(d)/".agents/skills/learnprint-personal/SKILL.md").exists())
+
+    def test_generated_skill_references_only_profile_and_protocols(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            w=Path(d)/"work"
+            mod.cmd_init(type("Args",(),{"workspace":str(w)})())
+            profile=mod.load(ROOT/"profiles/founder-default.json")
+            profile["public_template"]=False
+            profile["assessment_status"]="assessed"
+            mod.dump(w/"learner/profile.json",profile,overwrite=True)
+            # A distinctive raw learner answer lives in the workspace ledger...
+            marker="zz-unique-learner-answer-9f8c"
+            (w/"events.jsonl").write_text(
+                '{"event_id":"e1","observed_answer":"%s"}\n' % marker, encoding="utf-8")
+            mod.cmd_generate(type("Args",(),{"workspace":str(w),"approve":True})())
+            # ...but must never be copied into the generated skill artifact.
+            skill_dir=w/".agents/skills/learnprint-personal"
+            for f in skill_dir.rglob("*"):
+                if f.is_file() and f.suffix in {".md", ".json"}:
+                    self.assertNotIn(marker, f.read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as d:
+            w=Path(d)/"work"
+            mod.cmd_init(type("Args",(),{"workspace":str(w)})())
+            with self.assertRaises(ValueError): mod.cmd_generate(type("Args",(),{"workspace":str(w),"approve":True})())
+
     def test_generate_assessed_profile_with_explicit_approval(self):
         with tempfile.TemporaryDirectory() as d:
             w=Path(d)/"work"

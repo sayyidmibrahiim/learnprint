@@ -593,6 +593,30 @@ def progress(topic, events, now=None, policy=None, registry=None):
     }
 
 
+def resolve_effective_profile(local_path):
+    """Profile-first personalization (plan Step 2.1).
+
+    Returns (profile_dict, source) where source is "local" or
+    "founder_fallback:<reason>". An unassessed local profile NEVER overrides
+    the founder fallback for teaching preferences; missing/invalid profiles
+    fall back with the reason noted. Reading a file works on every host.
+    """
+    local_path = Path(local_path)
+    if local_path.exists():
+        try:
+            p = load(local_path)
+        except (ValueError, OSError):
+            p = None
+        if isinstance(p, dict) and not validate_profile(p):
+            if p.get("assessment_status") in {"assessed", "provisional"}:
+                return p, "local"
+            return load(ROOT / "profiles/founder-default.json"), \
+                "founder_fallback_until_assessed"
+        reason = "invalid" if p is not None else "unreadable"
+        return load(ROOT / "profiles/founder-default.json"), f"founder_fallback_{reason}"
+    return load(ROOT / "profiles/founder-default.json"), "founder_fallback_missing"
+
+
 def cmd_validate(a):
     p=load(a.profile)
     err=validate_profile(p)
@@ -750,9 +774,7 @@ def cmd_plan_reviews(a):
 def cmd_report(a):
     w=Path(a.workspace).expanduser().resolve()
     manifest=load(w/"manifest.json")
-    profile=load(w/manifest["profile_path"])
-    errs=validate_profile(profile)
-    if errs: raise ValueError("Invalid profile: "+"; ".join(errs))
+    profile, source = resolve_effective_profile(w/manifest["profile_path"])
     event_path=w/manifest["events_path"]
     events=events_read(event_path)
     for i,e in enumerate(events,1):
@@ -768,7 +790,7 @@ def cmd_report(a):
         errs=validate_topic(topic)
         if errs: raise ValueError(f"Invalid topic {path}: "+"; ".join(errs))
         states.append(progress(topic,events))
-    res={"profile_status":profile["assessment_status"],"effective_profile":"local" if profile["assessment_status"] in {"assessed","provisional"} else "founder_fallback_until_assessed", "event_count":len(events),"topics":states}
+    res={"profile_status":profile["assessment_status"],"effective_profile":source, "event_count":len(events),"topics":states}
     print(json.dumps(res,ensure_ascii=False,indent=2))
     return 0
 
