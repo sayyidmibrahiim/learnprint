@@ -1,0 +1,17 @@
+{
+  "event_id": "e-001",
+  "date": "2026-10-10T00:00:00+07:00",
+  "topic_id": "in-on-at",
+  "competency_id": "place-preposition",
+  "task_type": "independent_application",
+  "expected_reasoning": "The correct preposition follows the meaning of location, not a single generic specificity rule.",
+  "observed_answer": "I'm at the client's office.",
+  "rubric": {"concept": 2, "mechanism": 2, "application": 2, "transfer": null},
+  "help_level": "none",
+  "feedback": "Appropriate in a workplace location update.",
+  "grader": "human_reviewed",
+  "confidence_self_report": 60,
+  "evidence_origin": "observed_response",
+  "verified_by": "human",
+  "is_synthetic_example": true
+}

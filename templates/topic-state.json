@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0",
+  "topic_id": "sample-topic",
+  "goal": "State a real target competency",
+  "assumptions": [],
+  "learning_scope": [
+    {"id": "c1", "name": "Explain the mechanism", "status": "unknown", "evidence_ids": [], "due_at": null},
+    {"id": "c2", "name": "Solve an unfamiliar variation", "status": "unknown", "evidence_ids": [], "due_at": null}
+  ],
+  "syllabus": [
+    {"unit_id": "u1", "title": "Mechanism", "requires": [], "outcome": "Explain from evidence", "status": "not_started"},
+    {"unit_id": "u2", "title": "Transfer", "requires": ["u1"], "outcome": "Solve variant independently", "status": "not_started"}
+  ],
+  "question_parking_lot": [],
+  "sources": [],
+  "last_session": null
+}

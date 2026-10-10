@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "profile_id": "local-unassessed",
+  "assessment_status": "unassessed",
+  "public_template": false,
+  "locale": "id-ID",
+  "display_name": "Local learner",
+  "evidence_quality": "limited",
+  "disclaimer": "Not yet assessed. Public founder template may be used as a temporary instructional default, not as facts about this learner.",
+  "preferences": {},
+  "observed_claims": [],
+  "evidence": [],
+  "instruction_defaults": {},
+  "unknowns": ["Learner has not completed evidence-based assessment."]
+}

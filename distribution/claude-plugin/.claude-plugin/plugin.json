@@ -1,0 +1,7 @@
+{
+  "name": "learnprint",
+  "displayName": "Learnprint Adaptive Learning",
+  "description": "Evidence-gated learner assessment and personalized teaching with reliable handoff, practice, and spaced reviews.",
+  "version": "0.1.0",
+  "author": {"name": "Learnprint contributors"}
+}

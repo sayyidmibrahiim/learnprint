@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Learnprint learner profile",
+  "type": "object",
+  "required": ["schema_version", "profile_id", "assessment_status", "public_template", "evidence_quality", "observed_claims", "evidence", "instruction_defaults"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "profile_id": {"type": "string", "minLength": 1},
+    "assessment_status": {"enum": ["unassessed", "provisional", "assessed"]},
+    "public_template": {"type": "boolean"},
+    "evidence_quality": {"enum": ["limited", "moderate", "strong"]},
+    "observed_claims": {
+      "type": "array", "items": {
+        "type": "object", "required": ["id", "claim", "category", "evidence_ids"],
+        "properties": {
+          "id": {"type": "string"}, "claim": {"type": "string", "minLength": 1},
+          "category": {"enum": ["observed", "reported_preference", "hypothesis"]},
+          "evidence_ids": {"type": "array", "minItems": 1, "items": {"type": "string"}}
+        }
+      }
+    },
+    "evidence": {
+      "type": "array", "items": {
+        "type": "object", "required": ["id", "origin", "description", "verification", "source"],
+        "properties": {
+          "id": {"type": "string"}, "origin": {"enum": ["observed_task", "self_report", "source_document"]},
+          "verification": {"enum": ["observed", "reported", "independently_checked", "unverified"]},
+          "description": {"type": "string", "minLength": 1}, "source": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "instruction_defaults": {"type": "object"}
+  },
+  "additionalProperties": true
+}

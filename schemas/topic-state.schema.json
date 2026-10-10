@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object", "required": ["schema_version", "topic_id", "goal", "learning_scope", "syllabus"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "topic_id": {"type": "string", "minLength": 1},
+    "goal": {"type": "string"},
+    "learning_scope": {"type": "array", "items": {"type": "object", "required": ["id", "name", "status", "evidence_ids"],
+      "properties": {"status": {"enum": ["unknown", "emerging", "demonstrated", "retention_due", "maintained", "needs_review"]}}}},
+    "syllabus": {"type": "array"}
+  }
+}
