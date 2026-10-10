@@ -4,13 +4,18 @@ on:
   pull_request:
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ['3.9', '3.12']
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
-      - run: python -m unittest discover -s tests -v
+          python-version: ${{ matrix.python-version }}
+      - run: python -m unittest discover -s tests
       - run: python scripts/learnprint.py validate --profile profiles/founder-default.json
       - run: python scripts/learnprint.py validate --profile templates/learner-profile-starter.json --topic templates/topic-state.json
       - run: python scripts/check_package.py

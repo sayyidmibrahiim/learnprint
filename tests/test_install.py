@@ -140,6 +140,26 @@ class TestInstallMainCLI(unittest.TestCase):
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertTrue((Path(d) / ".git" / "hooks" / "pre-commit").exists())
 
+    def test_main_missing_personal_source_writes_nothing(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            git_repo(d)
+            ghost = str(Path(d) / "no-such-source")
+            r = install_cli("--target", "codex", "--dest", d,
+                            "--personal-skill", "--source", ghost, "--approve")
+            self.assertEqual(r.returncode, 2)
+            self.assertFalse((Path(d) / ".agents").exists())
+
+    def test_self_dry_run_has_no_side_effects(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            git_repo(d)
+            before = set(p.name for p in Path(d).iterdir())
+            r = install_cli("--target", "codex", "--dest", d, "--self", "--dry-run")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertFalse((Path(d) / ".gitignore").exists())
+            self.assertEqual(set(p.name for p in Path(d).iterdir()), before)
+
 
 if __name__ == "__main__":
     unittest.main()

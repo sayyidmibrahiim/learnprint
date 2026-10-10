@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import sys
+import threading
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -124,24 +125,46 @@ def _write_all(fd, data: bytes) -> None:
         view = view[n:]
 
 
+_APPEND_MUTEX = threading.Lock()
+
+
 def append_event_line(path, line: str, durable: bool = True) -> None:
     """Crash-safe single-line append to a JSONL ledger.
 
     Payload + trailing newline go out as ONE write so an interrupted append
     cannot produce a record without its terminator.
+
+    Same-process threads are serialized by an intra-process mutex: on
+    Windows the CRT implements O_APPEND as seek-then-write, which loses
+    whole same-length records under concurrent handles. Cross-PROCESS
+    safety still requires the caller to hold workspace_lock() (advisory);
+    every CLI mutator does. Cross-thread repair safety comes from the
+    repair path re-validating the ledger sha inside this same mutex
+    before mutating (stale diagnose → abort + retry, never truncate).
     """
     path = Path(path)
     payload = (line + "\n").encode("utf-8")
     # O_BINARY (no-op on POSIX): without it Windows translates \n to \r\n,
     # corrupting byte offsets used by ledger diagnostics and repair.
     flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_BINARY", 0)
-    fd = os.open(str(path), flags, 0o600)
-    try:
-        _write_all(fd, payload)
-        if durable:
-            os.fsync(fd)
-    finally:
-        os.close(fd)
+    with _APPEND_MUTEX:
+        if path.exists():
+            try:
+                existing = path.read_bytes()
+            except OSError:
+                existing = b""
+            if existing.strip() and not existing.endswith(b"\n"):
+                raise LedgerDamage(
+                    f"ledger {path}: final record missing terminal newline; "
+                    "append refused (would merge two events). "
+                    "Run course repair-evidence, then retry.")
+        fd = os.open(str(path), flags, 0o600)
+        try:
+            _write_all(fd, payload)
+            if durable:
+                os.fsync(fd)
+        finally:
+            os.close(fd)
 
 
 def _fsync_dir(directory) -> None:
@@ -343,7 +366,8 @@ def ledger_diagnose(path, workspace_root=None):
     damage = []
     records = 0
     offset = 0
-    for line_no, raw_line in enumerate(raw.split(b"\n"), 1):
+    lines = raw.split(b"\n")
+    for line_no, raw_line in enumerate(lines, 1):
         stripped = raw_line.strip()
         if stripped:
             try:
@@ -358,6 +382,18 @@ def ledger_diagnose(path, workspace_root=None):
                     "is_truncated_tail": not raw.endswith(b"\n") and line_no == raw.count(b"\n") + 1,
                 })
         offset += len(raw_line) + 1
+    if raw.strip() and not raw.endswith(b"\n") and not damage:
+        # Final record parses but lacks its terminator: one append away
+        # from two logical events merging into one malformed record.
+        damage.append({
+            "line_no": len(lines),
+            "byte_offset": len(raw) - len(lines[-1]),
+            "reason": "final record missing terminal newline; "
+                      "append refused until repaired",
+            "raw_bytes_preserved": True,
+            "is_truncated_tail": False,
+            "is_missing_terminator": True,
+        })
     return {
         "status": "damaged" if damage else "ok",
         "path": str(path),
@@ -387,6 +423,11 @@ def ledger_read_trusted(path, workspace_root=None):
     raw = path.read_bytes()
     if not raw.strip():
         return []
+    if not raw.endswith(b"\n"):
+        raise LedgerDamage(
+            f"ledger {path}: final record missing terminal newline; "
+            "a further append would merge two events into one malformed "
+            "record. Run course repair-evidence, then retry.")
     events = []
     seen_ids = set()
     offset = 0
@@ -411,54 +452,109 @@ def ledger_read_trusted(path, workspace_root=None):
     return events
 
 
-def ledger_repair_truncate_partial_tail(path):
-    """EXPLICIT non-destructive repair for a truncated final record only.
+def _ledger_repair_backup(path, raw):
+    """Immutable uniquely-named backup of pre-repair bytes (atomic + fsync).
 
-    Allocates its own immutable uniquely-named backup
-    (<name>.bak.<UTC-ts>.<sha8>); refuses if that name exists. Audit entry
-    (pre/post SHA256) is appended via the durable locked primitive.
+    Refuses to overwrite an existing backup. Returns backup_path.
     """
-    path = Path(path)
-    report = ledger_diagnose(path)
-    if report["status"] != "damaged":
-        return report
-    tail = [d for d in report["damage"] if d["is_truncated_tail"]]
-    others = [d for d in report["damage"] if not d["is_truncated_tail"]]
-    if others:
-        raise LedgerDamage(
-            f"ledger {path} line {others[0]['line_no']}: "
-            f"{len(others)} damaged record(s) that are not a truncated tail; "
-            "manual review required")
-    if len(tail) != 1:
-        raise LedgerDamage(f"ledger {path}: multiple damaged tail records; "
-                           "manual review required")
-
-    raw = path.read_bytes()
-    cut = tail[0]["byte_offset"]
     sha8 = hashlib.sha256(raw).hexdigest()[:8]
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     backup_path = path.parent / f"{path.name}.bak.{stamp}.{sha8}"
     if backup_path.exists():
         raise LedgerDamage(f"ledger {path}: backup {backup_path.name} already "
                            "exists; refusing to overwrite a previous backup")
-    with open(backup_path, "wb") as fh:
-        fh.write(raw)
-    with open(path, "r+b") as fh:
-        fh.truncate(cut)
-    log = {
-        "repaired_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-        "original_sha256": report["sha256"],
-        "backup_path": str(backup_path),
-        "backup_sha256": hashlib.sha256(raw).hexdigest(),
-        "repaired_sha256": hashlib.sha256(raw[:cut]).hexdigest(),
-        "removed_byte_offset": cut,
-        "removed_line_no": tail[0]["line_no"],
-        "removed_reason": "truncated tail from interrupted append",
+    atomic_write_bytes(backup_path, raw)
+    return backup_path
+
+
+def ledger_repair_truncate_partial_tail(path):
+    """EXPLICIT non-destructive repair for two interrupted-append cases:
+
+    1. Truncated final record (unparsable tail): truncate at the damage
+       offset, preserving all complete records.
+    2. Complete final record missing its terminal newline: append the
+       missing newline, preserving the record.
+
+    Both paths allocate an immutable uniquely-named backup
+    (<name>.bak.<UTC-ts>.<sha8>), refuse backup overwrite, fsync every
+    mutation, and append a hash-verified audit entry via the durable
+    primitive. Any other damage shape raises LedgerDamage for manual
+    review. Idempotent: a clean ledger returns its ok report unchanged.
+    """
+    path = Path(path)
+    report = ledger_diagnose(path)
+    if report["status"] != "damaged":
+        return report
+    missing = [d for d in report["damage"] if d.get("is_missing_terminator")]
+    tail = [d for d in report["damage"] if d["is_truncated_tail"]]
+    others = [d for d in report["damage"]
+              if not d["is_truncated_tail"] and not d.get("is_missing_terminator")]
+    if others:
+        raise LedgerDamage(
+            f"ledger {path} line {others[0]['line_no']}: "
+            f"{len(others)} damaged record(s) that are not a truncated tail; "
+            "manual review required")
+    raw = path.read_bytes()
+    if missing and not tail and len(missing) == 1:
+        with _APPEND_MUTEX:
+            fresh = ledger_diagnose(path)
+            if fresh.get("sha256") != report["sha256"]:
+                raise LedgerDamage(
+                    f"ledger {path}: changed during repair; retry the repair")
+            backup_path = _ledger_repair_backup(path, raw)
+            flags = os.O_WRONLY | os.O_APPEND | getattr(os, "O_BINARY", 0)
+            fd = os.open(str(path), flags)
+            try:
+                _write_all(fd, b"\n")
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            _fsync_dir(path.parent)
+        repaired = raw + b"\n"
+        log = {
+            "repaired_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "original_sha256": report["sha256"],
+            "backup_path": str(backup_path),
+            "backup_sha256": hashlib.sha256(raw).hexdigest(),
+            "repaired_sha256": hashlib.sha256(repaired).hexdigest(),
+            "removed_byte_offset": None,
+            "removed_line_no": missing[0]["line_no"],
+            "removed_reason": "restored missing terminal newline; no bytes removed",
+            "raw_removed_bytes": "",
+        }
+        append_event_line(path.parent / "recovery-log.jsonl",
+                          json.dumps(log, ensure_ascii=False), durable=True)
+        return ledger_diagnose(path)
+    if tail and not missing and len(tail) == 1:
+        cut = tail[0]["byte_offset"]
+        with _APPEND_MUTEX:
+            fresh = ledger_diagnose(path)
+            if fresh.get("sha256") != report["sha256"]:
+                raise LedgerDamage(
+                    f"ledger {path}: changed during repair; retry the repair")
+            backup_path = _ledger_repair_backup(path, raw)
+            with open(path, "r+b") as fh:
+                fh.truncate(cut)
+                fh.flush()
+                os.fsync(fh.fileno())
+            _fsync_dir(path.parent)
+        log = {
+            "repaired_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "original_sha256": report["sha256"],
+            "backup_path": str(backup_path),
+            "backup_sha256": hashlib.sha256(raw).hexdigest(),
+            "repaired_sha256": hashlib.sha256(raw[:cut]).hexdigest(),
+            "removed_byte_offset": cut,
+            "removed_line_no": tail[0]["line_no"],
+            "removed_reason": "truncated tail from interrupted append",
         "raw_removed_bytes": raw[cut:].hex(),
-    }
-    append_event_line(path.parent / "recovery-log.jsonl",
-                      json.dumps(log, ensure_ascii=False), durable=True)
-    return ledger_diagnose(path)
+        }
+        append_event_line(path.parent / "recovery-log.jsonl",
+                          json.dumps(log, ensure_ascii=False), durable=True)
+        return ledger_diagnose(path)
+    raise LedgerDamage(f"ledger {path}: ambiguous damage shape "
+                       f"({len(tail)} truncated tail(s), {len(missing)} "
+                       "unterminated record(s)); manual review required")
 
 
 def validate_event(e):
@@ -816,6 +912,8 @@ def validate_path(proposed_path, courses_root):
     courses = Path(courses_root).resolve()
     if os.path.isabs(proposed_path):
         return False, "Absolute paths not allowed"
+    if "\\" in proposed_path:
+        return False, "Backslash not allowed: use '/' separators for category paths"
     normalized = proposed_path.replace("\\", "/")
     for part in normalized.split("/"):
         if part in ("..", ".") or part.startswith("~"):
@@ -835,13 +933,18 @@ def validate_path(proposed_path, courses_root):
     for part in full.relative_to(courses).parts:
         if part.split(".")[0].upper() in reserved:
             return False, f"Windows reserved name: {part}"
-    rel_parts = full.relative_to(courses).parts
+    # Collision walk uses the PROPOSED casing, not the resolved one: on a
+    # case-insensitive filesystem resolve() canonicalizes "OTHER" to an
+    # existing "other", which would mask the collision this check exists for.
+    rel_parts = tuple(s for s in normalized.split("/") if s not in ("",))
     for i in range(1, len(rel_parts) + 1):
         part_path = courses.joinpath(*rel_parts[:i])
         parent = part_path.parent
         target = part_path.name.lower()
         if parent.exists():
-            existing = {p.name.lower(): p.name for p in parent.iterdir() if p.is_dir()}
+            # Files count too: a file colliding with a category segment
+            # fails loudly at mkdir time without this early refusal.
+            existing = {p.name.lower(): p.name for p in parent.iterdir()}
             if target in existing and existing[target] != part_path.name:
                 return False, f"Case collision: '{part_path.name}' vs existing '{existing[target]}'"
     if len(rel_parts) > 6:
@@ -859,20 +962,83 @@ def registry_path(courses_root):
 def registry_read(courses_root):
     p = registry_path(courses_root)
     if not p.exists():
+        # The lock file alone is infrastructure, not initialization:
+        # workspace_lock() creates .learnprint/.lock on demand (e.g. a
+        # fresh migrate destination). Only canonical workspace artifacts
+        # mark a workspace as initialized whose missing registry is an
+        # error rather than an empty workspace.
+        lp = Path(courses_root) / ".learnprint"
+        initialized = lp.exists() and any(
+            (lp / m).exists()
+            for m in ("registry.json.bak", "events.jsonl", "approval.json",
+                      "config.json", "learner", "reviews.json"))
+        if initialized:
+            raise ValueError(
+                f"registry missing in initialized workspace: {p}; "
+                "restore registry.json from registry.json.bak, or re-run course init")
         return {"schema_version": "1.0", "courses": [], "active_course_id": None}
-    data = json.loads(p.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (ValueError, OSError) as exc:
+        raise ValueError(
+            f"registry corrupt: {p} ({exc}); "
+            "restore from registry.json.bak, do not edit by hand")
     if not isinstance(data, dict) or not isinstance(data.get("courses"), list):
-        raise ValueError(f"registry corrupt: {p}")
+        raise ValueError(f"registry corrupt: {p} (schema); "
+                         "restore from registry.json.bak")
     return data
 
 
+def atomic_write_bytes(path, data: bytes, durable: bool = True) -> None:
+    """Byte-level atomic replace via unique temp file + os.replace()."""
+    import tempfile
+    path = Path(path)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp",
+                               prefix=path.stem + "_")
+    try:
+        _write_all(fd, data)
+        if durable:
+            os.fsync(fd)
+        os.close(fd)
+        fd = -1
+        os.replace(tmp, str(path))
+        if durable:
+            _fsync_dir(path.parent)
+    except BaseException:
+        if fd >= 0:
+            os.close(fd)
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
 def registry_write(courses_root, registry):
-    """Backup-then-write under the caller's lock (plan Step 4.6)."""
+    """Backup-then-write under the caller's lock (plan Step 4.6).
+
+    The backup preserves the actual PRIOR registry bytes, never a copy of
+    the new payload: a backup identical to the new write would promise a
+    recovery that does not exist.
+    """
     d = Path(courses_root) / ".learnprint"
     d.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(registry, ensure_ascii=False, indent=2) + "\n"
-    atomic_write(d / "registry.json.bak", payload)
-    atomic_write(d / "registry.json", payload)
+    payload = (json.dumps(registry, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    cur = d / "registry.json"
+    bak = d / "registry.json.bak"
+    if cur.exists():
+        try:
+            prior = cur.read_bytes()
+        except OSError as exc:
+            raise ValueError(
+                f"registry unreadable, refusing to overwrite: {cur} ({exc}); "
+                "restore from registry.json.bak")
+        if prior != payload:
+            atomic_write_bytes(bak, prior)
+        elif not bak.exists():
+            atomic_write_bytes(bak, payload)
+    else:
+        if not bak.exists():
+            atomic_write_bytes(bak, payload)
+    atomic_write_bytes(cur, payload)
 
 
 def _cname(course_id):
@@ -941,22 +1107,70 @@ def course_create(courses_root, category_path, title, goal, aliases=(),
                         f"({_cname(c.get('course_id'))}); ask the user which course was meant")
         course_dir = root / rel
         adopted = False
+        existing_state = None
         if course_dir.exists():
-            if (course_dir / "state.json").exists():
-                adopted = True  # crash-recovery: orphan dir, register it
-            else:
+            st_path = course_dir / "state.json"
+            if not st_path.exists():
                 raise ValueError(f"Refusing to overwrite: {course_dir}")
+            # Crash-recovery path: a directory left behind by an interrupted
+            # create. Validate its identity BEFORE touching the registry —
+            # a corrupt or conflicting orphan must refuse, never be adopted
+            # with a swallowed state-update error.
+            try:
+                existing_state = json.loads(st_path.read_text(encoding="utf-8"))
+            except (ValueError, OSError) as exc:
+                raise ValueError(
+                    f"Refusing to adopt directory with unreadable state.json: "
+                    f"{course_dir} ({exc}); repair or remove it manually")
+            if not isinstance(existing_state, dict):
+                raise ValueError(
+                    f"Refusing to adopt directory with invalid state.json: {course_dir}")
+            adopted = True
         else:
             course_dir.mkdir(parents=True)
-            (course_dir / "README.md").write_text(f"# {title}\n\nGoal: {goal}\n", encoding="utf-8")
-            (course_dir / "SYLLABUS.md").write_text(f"# {title} — syllabus\n", encoding="utf-8")
-            (course_dir / "MAP.mmd").write_text("flowchart TD\n", encoding="utf-8")
-            (course_dir / "HANDOFF.md").write_text(f"# Handoff — {title}\n", encoding="utf-8")
-            (course_dir / "state.json").write_text(json.dumps(
-                {"schema_version": "1.0", "course_id": None, "goal": goal,
-                 "learning_scope": [], "sources": []}, ensure_ascii=False, indent=2) + "\n",
-                encoding="utf-8")
-        course_id = routing.allocate_course_id(registry)
+        if adopted and isinstance((existing_state or {}).get("course_id"), str):
+            orphan_id = existing_state["course_id"]
+            if not routing.is_course_id(orphan_id):
+                raise ValueError(
+                    f"Refusing to adopt directory with invalid course_id: {course_dir}")
+            if any(c.get("course_id") == orphan_id for c in registry.get("courses", [])):
+                raise ValueError(
+                    f"Orphan directory identity already registered: {orphan_id}")
+            # Interrupted create BEFORE the registry commit: reuse the orphan
+            # identity so a retry converges to one course (never reallocates).
+            course_id = orphan_id
+        else:
+            course_id = routing.allocate_course_id(registry)
+        # Artifact writes are atomic and non-destructive: existing user
+        # content is never overwritten; state carries the course_id BEFORE
+        # the registry commit so the registry never advertises a course
+        # whose state is inconsistent.
+        artifacts = {
+            "README.md": f"# {title}\n\nGoal: {goal}\n",
+            "SYLLABUS.md": f"# {title} — syllabus\n",
+            "MAP.mmd": "flowchart TD\n",
+            "HANDOFF.md": f"# Handoff — {title}\n",
+        }
+        for name, content in artifacts.items():
+            p = course_dir / name
+            if not p.exists():
+                atomic_write(p, content)
+        state_path = course_dir / "state.json"
+        if isinstance(existing_state, dict):
+            st = dict(existing_state)
+            st.setdefault("schema_version", "1.0")
+            st.setdefault("goal", goal)
+            st.setdefault("learning_scope", [])
+            st.setdefault("sources", [])
+            st["course_id"] = course_id
+        else:
+            st = {"schema_version": "1.0", "course_id": course_id, "goal": goal,
+                  "learning_scope": [], "sources": []}
+        atomic_write(state_path, json.dumps(st, ensure_ascii=False, indent=2) + "\n")
+        verify = json.loads(state_path.read_text(encoding="utf-8"))
+        if verify.get("course_id") != course_id:
+            raise ValueError(
+                f"State verification failed after write: {state_path}")
         entry = {
             "course_id": course_id,
             "title": title,
@@ -974,14 +1188,6 @@ def course_create(courses_root, category_path, title, goal, aliases=(),
         }
         registry.setdefault("courses", []).append(entry)
         registry_write(root, registry)
-        state_path = course_dir / "state.json"
-        try:
-            st = json.loads(state_path.read_text(encoding="utf-8"))
-            st["course_id"] = course_id
-            state_path.write_text(json.dumps(st, ensure_ascii=False, indent=2) + "\n",
-                                  encoding="utf-8")
-        except (ValueError, OSError):
-            pass
         entry["adopted_existing_dir"] = adopted
         return entry
 
@@ -1002,11 +1208,40 @@ def course_rename(courses_root, course_id, title, update_path=False):
             for c in registry.get("courses", []):
                 if c is not entry and c.get("rel_path") == rel:
                     raise ValueError(f"rename target collides: {rel}")
-            os.replace(str(root / entry["rel_path"]), str(root / rel))
+            valid, err = validate_path(rel, root)
+            if not valid:
+                raise ValueError(f"invalid rename target path: {err}")
+            src = root / entry["rel_path"]
+            dest = root / rel
+            if rel == entry["rel_path"]:
+                pass  # title-only change: no filesystem move needed
+            else:
+                if not src.exists():
+                    # Crash-retry: a previous rename completed the replace but
+                    # lost the registry commit. Adopt the already-moved path
+                    # when its state identity matches this entry.
+                    if _moved_dir_matches(dest, course_id):
+                        entry["slug"] = slug
+                        entry["rel_path"] = rel
+                        registry_write(root, registry)
+                        return entry
+                    raise ValueError(f"rename source missing: {entry['rel_path']}")
+                if dest.exists():
+                    raise ValueError(f"refusing to overwrite existing path: {rel}")
+                os.replace(str(src), str(dest))
             entry["slug"] = slug
             entry["rel_path"] = rel
         registry_write(root, registry)
         return entry
+
+
+def _moved_dir_matches(dest, course_id):
+    """True iff dest holds a state.json whose identity matches course_id."""
+    try:
+        st = json.loads((Path(dest) / "state.json").read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return False
+    return isinstance(st, dict) and st.get("course_id") == course_id
 
 
 def course_move(courses_root, course_id, category_path, confirm_new_segments=()):
@@ -1028,13 +1263,32 @@ def course_move(courses_root, course_id, category_path, confirm_new_segments=())
                 raise ValueError(
                     f"new category segments need explicit confirmation: {sorted(missing)}")
         resolved_path = gate["resolved_path"]
+        valid, err = validate_path(resolved_path, root)
+        if not valid:
+            raise ValueError(f"invalid category path: {err}")
         rel = (Path(resolved_path) / entry["slug"]).as_posix()
         for c in registry.get("courses", []):
             if c is not entry and c.get("rel_path") == rel:
                 raise ValueError(f"move target collides: {rel}")
+        src = root / entry["rel_path"]
         dest = root / rel
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(str(root / entry["rel_path"]), str(dest))
+        if rel == entry["rel_path"]:
+            pass  # same-category move: registry metadata already correct
+        else:
+            if not src.exists():
+                # Crash-retry: a previous move completed the replace but lost
+                # the registry commit. Adopt the already-moved directory when
+                # its state identity matches this entry.
+                if _moved_dir_matches(dest, course_id):
+                    entry["category_path"] = resolved_path
+                    entry["rel_path"] = rel
+                    registry_write(root, registry)
+                    return entry
+                raise ValueError(f"move source missing: {entry['rel_path']}")
+            if dest.exists():
+                raise ValueError(f"refusing to overwrite existing path: {rel}")
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(str(src), str(dest))
         entry["category_path"] = resolved_path
         entry["rel_path"] = rel
         registry_write(root, registry)
@@ -1194,10 +1448,17 @@ def cmd_course_dashboard(a):
             lines.append("")
         due_all = reviews_from_events(_course_topics(root, registry), ledger,
                                      stored_reviews=stored if stored else None)["reviews"]
-        if due_all:
-            lines.append("## Due reviews")
-            for r in due_all:
+        due_now = [r for r in due_all if _parse_dt(r["due_at"]) <= now]
+        scheduled = [r for r in due_all if _parse_dt(r["due_at"]) > now]
+        if due_now:
+            lines.append("## Due now")
+            for r in due_now:
                 lines.append(f"- {r['competency_id']}: due {r['due_at']} [{r['basis']}]")
+            lines.append("")
+        if scheduled:
+            lines.append("## Scheduled reviews")
+            for r in scheduled:
+                lines.append(f"- {r['competency_id']}: scheduled {r['due_at']} [{r['basis']}]")
             lines.append("")
         atomic_write(root / "INDEX.md", "\n".join(lines) + "\n")
     print(f"DASHBOARD regenerated: {root / 'INDEX.md'}")
@@ -1228,18 +1489,61 @@ def cmd_course_resume(a):
     return 0
 
 
-def cmd_course_validate(a):
-    root = _courses_root(a)
-    registry = registry_read(root)
+def collect_workspace_problems(root, registry):
+    """Read-only coherence audit: registry/state identity, duplicates,
+    orphans, ledger health, stale temp files. Returns [problems]."""
+    root = Path(root)
     problems = []
-    for c in registry.get("courses", []):
-        if not (root / c.get("rel_path", "") / "state.json").exists():
+    courses = registry.get("courses", [])
+    seen_ids = {}
+    for c in courses:
+        cid = c.get("course_id")
+        if cid in seen_ids:
+            problems.append(f"duplicate course_id {cid}: {seen_ids[cid]} and {c.get('rel_path')}")
+        else:
+            seen_ids[cid] = c.get("rel_path")
+    seen_titles = {}
+    for c in courses:
+        key = (c.get("category_path"), c.get("normalized_title"))
+        if key in seen_titles:
+            problems.append(
+                f"duplicate course title in category {key[0]!r}: "
+                f"{seen_titles[key]} and {c.get('rel_path')}")
+        else:
+            seen_titles[key] = c.get("rel_path")
+    alias_owner = {}
+    for c in courses:
+        for na in c.get("normalized_aliases", []):
+            if na in alias_owner and alias_owner[na] != c.get("course_id"):
+                problems.append(
+                    f"conflicting alias {na!r}: owned by {alias_owner[na]} and {c.get('course_id')}")
+            else:
+                alias_owner[na] = c.get("course_id")
+    for c in courses:
+        sp = root / c.get("rel_path", "") / "state.json"
+        if not sp.exists():
             problems.append(f"missing directory for course {c.get('course_id')}: {c.get('rel_path')}")
-    known_dirs = {c.get("rel_path") for c in registry.get("courses", [])}
+            continue
+        try:
+            st = json.loads(sp.read_text(encoding="utf-8"))
+        except (ValueError, OSError) as exc:
+            problems.append(f"unreadable state.json for course {c.get('course_id')}: {exc}")
+            continue
+        if isinstance(st, dict) and st.get("course_id") != c.get("course_id"):
+            problems.append(
+                f"state/registry identity mismatch for {c.get('rel_path')}: "
+                f"state has {st.get('course_id')!r}, registry has {c.get('course_id')!r}")
+    active = registry.get("active_course_id")
+    if active is not None and all(c.get("course_id") != active for c in courses):
+        problems.append(f"active_course_id {active} references unknown course")
+    known_dirs = {c.get("rel_path") for c in courses}
     for sp in root.rglob("state.json"):
         if ".learnprint" in sp.parts:
             continue
-        rel = sp.parent.relative_to(root).as_posix()
+        try:
+            rel = sp.parent.relative_to(root).as_posix()
+        except ValueError:
+            continue
         if rel not in known_dirs:
             problems.append(f"orphan directory (unregistered): {rel}")
     diag = ledger_diagnose(root / ".learnprint" / "events.jsonl", workspace_root=root)
@@ -1249,11 +1553,23 @@ def cmd_course_validate(a):
         problems.append("ledger missing: events.jsonl absent in initialized workspace")
     for tmp in (root / ".learnprint").glob("*.tmp"):
         problems.append(f"stale temp file: {tmp.name}")
+    return problems
+
+
+def cmd_course_validate(a):
+    root = _courses_root(a)
+    try:
+        registry = registry_read(root)
+    except ValueError as exc:
+        print(f"INVALID\n{exc}")
+        return 2
+    problems = collect_workspace_problems(root, registry)
     if problems and not (a.repair and a.approve):
         print("INVALID\n" + "\n".join(problems))
         return 2
     if a.repair:
         _require(a, root, "state-update")
+        fixed_notes = []
         with workspace_lock(root):
             registry = registry_read(root)
             known = {c.get("rel_path") for c in registry.get("courses", [])}
@@ -1262,20 +1578,84 @@ def cmd_course_validate(a):
                     continue
                 rel = sp.parent.relative_to(root).as_posix()
                 if rel not in known:
-                    entry = {"course_id": routing.allocate_course_id(registry),
-                             "title": sp.parent.name, "normalized_title": routing.normalize_key(sp.parent.name),
-                             "slug": sp.parent.name, "category_path": sp.parent.parent.relative_to(root).as_posix(),
+                    try:
+                        orphan_state = json.loads(sp.read_text(encoding="utf-8"))
+                    except (ValueError, OSError):
+                        orphan_state = None
+                    if not isinstance(orphan_state, dict):
+                        fixed_notes.append(
+                            f"orphan directory with unreadable state.json: {rel} "
+                            "MANUAL INTERVENTION REQUIRED")
+                        known.add(rel)
+                        continue
+                    orphan_id = orphan_state.get("course_id")
+                    if isinstance(orphan_id, str) and routing.is_course_id(orphan_id):
+                        if any(c.get("course_id") == orphan_id
+                               for c in registry.get("courses", [])):
+                            fixed_notes.append(
+                                f"orphan directory identity already registered: {rel} "
+                                "MANUAL INTERVENTION REQUIRED")
+                            known.add(rel)
+                            continue
+                        new_id = orphan_id  # preserve interrupted-create identity
+                    else:
+                        new_id = routing.allocate_course_id(registry)
+                    title = sp.parent.name
+                    norm_title = routing.normalize_key(title)
+                    try:
+                        category = sp.parent.parent.relative_to(root).as_posix()
+                    except ValueError:
+                        fixed_notes.append(
+                            f"orphan directory outside workspace tree: {rel} "
+                            "MANUAL INTERVENTION REQUIRED")
+                        known.add(rel)
+                        continue
+                    clash = next(
+                        (c for c in registry.get("courses", [])
+                         if c.get("category_path") == category
+                         and c.get("normalized_title") == norm_title),
+                        None)
+                    if clash is not None:
+                        fixed_notes.append(
+                            f"orphan directory title collides with registered course "
+                            f"{clash.get('course_id')}: {rel} "
+                            "MANUAL INTERVENTION REQUIRED")
+                        known.add(rel)
+                        continue
+                    entry = {"course_id": new_id,
+                             "title": title, "normalized_title": norm_title,
+                             "slug": sp.parent.name, "category_path": category,
                              "rel_path": rel, "aliases": [], "normalized_aliases": [],
                              "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
                              "last_activity": None, "classification_source": "imported",
                              "goal": "", "topic_id": None}
                     registry.setdefault("courses", []).append(entry)
-                    problems.append(f"adopted orphan directory: {rel}")
+                    # Stamp the adopted identity into the orphan state BEFORE
+                    # the registry commit advertises it (same ordering as
+                    # course_create); failure here refuses, never half-adopts.
+                    orphan_state["course_id"] = new_id
+                    orphan_state.setdefault("schema_version", "1.0")
+                    orphan_state.setdefault("goal", "")
+                    orphan_state.setdefault("learning_scope", [])
+                    orphan_state.setdefault("sources", [])
+                    atomic_write(sp, json.dumps(orphan_state, ensure_ascii=False, indent=2) + "\n")
+                    fixed_notes.append(f"adopted orphan directory: {rel}")
                     known.add(rel)
             for tmp in (root / ".learnprint").glob("*.tmp"):
                 tmp.unlink()
-                problems.append(f"removed stale temp file: {tmp.name}")
+                fixed_notes.append(f"removed stale temp file: {tmp.name}")
             registry_write(root, registry)
+            # Re-audit: a repair that leaves real damage must NOT report
+            # SUCCESS. Orphans/tmp adopted above no longer appear; anything
+            # remaining (ledger damage, mismatches, duplicates) is INVALID.
+            registry = registry_read(root)
+            remaining = collect_workspace_problems(root, registry)
+            manual = [n for n in fixed_notes if "MANUAL INTERVENTION REQUIRED" in n]
+            if remaining or manual:
+                print("INVALID\n" + "\n".join(manual + remaining))
+                return 2
+            print("REPAIRED\n" + "\n".join(fixed_notes) if fixed_notes else "VALID")
+            return 0
     print("VALID" if not problems else "REPAIRED\n" + "\n".join(problems))
     return 0
 
