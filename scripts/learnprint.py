@@ -16,7 +16,12 @@ ASSESSMENT = {"unassessed", "provisional", "assessed"}
 ORIGINS = {"observed_task", "self_report", "source_document"}
 VERIFICATIONS = {"observed", "reported", "independently_checked", "unverified"}
 HELP = {"none", "hint", "worked_example", "solution"}
-TYPES = {"recognition", "causal_explanation", "independent_application", "novel_transfer", "delayed_retrieval", "debugging", "decision"}
+TYPES = {"recognition", "causal_explanation", "independent_application", "novel_transfer", "delayed_retrieval", "debugging", "decision", "confirmation", "correction"}
+DEMO_TYPES = {"independent_application", "novel_transfer", "delayed_retrieval"}
+GRADER_SOURCES = {"agent", "learner", "third_party"}
+TIER_BASIS = {"provisional", "learner_confirmed", "substantiated"}
+SOURCE_STATUSES = {"verified", "UNVERIFIED", "learner-reported", "agent-generated", "unknown"}
+_COURSE_ID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 
 
 def load(path):
@@ -87,6 +92,13 @@ def validate_topic(p):
         if x.get("status") not in STATUSES: errs.append("bad competency status")
         if not x.get("id") or x["id"] in ids: errs.append("bad/duplicate competency id")
         ids.add(x.get("id"))
+    if "sources" in p:
+        if not isinstance(p["sources"], list): errs.append("sources must be array")
+        else:
+            for s in p["sources"]:
+                if not isinstance(s, dict): errs.append("source entry not object"); continue
+                if s.get("status") not in SOURCE_STATUSES:
+                    errs.append("source entry requires status in verified/UNVERIFIED/learner-reported/agent-generated/unknown")
     return errs
 
 
@@ -122,7 +134,73 @@ def validate_event(e):
     if e.get("is_synthetic_example", False) and e.get("grader") == "human_reviewed":
         # fixtures are allowed but excluded from real scoring
         pass
+    # Optional provenance linkage fields: validated when present, never required
+    # (legacy events predate them). verified_by is informational metadata only
+    # and is NEVER used for tiering (see evidence_basis).
+    if "course_id" in e and not isinstance(e["course_id"], str):
+        errs.append("course_id must be string")
+    elif isinstance(e.get("course_id"), str) and not _COURSE_ID_RE.match(e["course_id"]):
+        errs.append("course_id must be UUIDv4")
+    if "grader_source" in e and e["grader_source"] not in GRADER_SOURCES:
+        errs.append("invalid event.grader_source")
+    for link in ("confirms_event_id", "corrects_event_id", "corroborates_event_id"):
+        if link in e and (not isinstance(e[link], str) or not e[link].strip()):
+            errs.append(f"{link} must be a non-empty event id")
+    if e.get("task_type") == "confirmation" and not e.get("confirms_event_id"):
+        errs.append("confirmation requires confirms_event_id")
+    if e.get("task_type") == "correction" and not e.get("corrects_event_id"):
+        errs.append("correction requires corrects_event_id")
     return errs
+
+
+def is_observed_unassisted(e):
+    """Pure predicate: event is usable demonstration evidence (provisional basis).
+
+    Grader labels gate nothing. confirmation/correction events are linkage
+    metadata, not demonstration evidence.
+    """
+    return (e.get("help_level") == "none"
+            and e.get("evidence_origin") == "observed_response"
+            and e.get("rubric") is not None
+            and e.get("task_type") in DEMO_TYPES)
+
+
+def evidence_basis(cycle_events, ledger):
+    """Derive claim strength from linked acknowledgement/corroboration.
+
+    The validator computes this; recorders never set it. verified_by strings
+    are ignored. See plan Step 1.1a.
+    """
+    if not cycle_events:
+        return "provisional"
+    ids = {e["event_id"] for e in cycle_events}
+    course_id = cycle_events[0].get("course_id")
+    comp_id = cycle_events[0].get("competency_id")
+    confirmed = any(
+        e.get("task_type") == "confirmation"
+        and e.get("confirms_event_id") in ids
+        and e.get("evidence_origin") == "observed_response"
+        for e in ledger
+    )
+    sources = {e.get("grader_source") for e in cycle_events
+               if e.get("grader_source")}
+    corroborated = any(
+        e.get("task_type") in DEMO_TYPES
+        and e.get("corroborates_event_id") in ids
+        and e.get("course_id") == course_id and course_id is not None
+        and e.get("competency_id") == comp_id
+        and e.get("rubric") is not None
+        and e.get("help_level") == "none"
+        and e.get("evidence_origin") == "observed_response"
+        and e.get("grader_source") not in sources
+        and e.get("grader_source") is not None
+        for e in ledger if e not in cycle_events
+    )
+    if corroborated:
+        return "substantiated"
+    if confirmed:
+        return "learner_confirmed"
+    return "provisional"
 
 
 def progress(topic, events, now=None):
