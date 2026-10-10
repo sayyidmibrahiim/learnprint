@@ -349,5 +349,142 @@ class TestB5ValidateHonesty(unittest.TestCase):
             self.assertIn("VALID", buf2.getvalue())
 
 
+class TestCRoutingLifecycle(unittest.TestCase):
+    def test_parent_scoped_grammar_coexistence(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(d)
+            en = mod.course_create(**create_kwargs(root, "languages/english/grammar", "in on at"))
+            jp = mod.course_create(root, "languages/japanese/grammar", "particles wa ga",
+                                    "g", (), ("japanese", "grammar"))
+            self.assertEqual(en["category_path"], "languages/english/grammar")
+            self.assertEqual(jp["category_path"], "languages/japanese/grammar")
+            self.assertNotEqual(en["course_id"], jp["course_id"])
+            # Case-insensitive reuse under the SAME canonical parent.
+            again = mod.course_create(root, "languages/english/Grammar", "articles a the",
+                                       "g", (), ())
+            self.assertEqual(again["category_path"], "languages/english/grammar")
+
+    def test_typo_segment_needs_confirmation_never_merges(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(d)
+            mod.course_create(**create_kwargs(root, "languages/english/grammar", "in on at"))
+            with self.assertRaises(ValueError):
+                mod.course_create(root, "languages/english/grammer", "Grammer", "g", (), ("approve",))
+            reg = mod.registry_read(root)
+            self.assertEqual(len(reg["courses"]), 1)
+
+    def test_vocabulary_scopes_independent(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(d)
+            dev = mod.course_create(root, "technology/devops/vocabulary", "cicd terms",
+                                     "g", (), ("devops", "vocabulary"))
+            eng = mod.course_create(root, "languages/english/vocabulary", "word list",
+                                     "g", (), ("english", "vocabulary"))
+            self.assertEqual(dev["category_path"], "technology/devops/vocabulary")
+            self.assertEqual(eng["category_path"], "languages/english/vocabulary")
+
+    def test_root_alias_resolves_before_validation(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(d)
+            c = mod.course_create(root, "tech/devops", "cicd", "g", (), ("devops",))
+            self.assertEqual(c["category_path"], "technology/devops")
+
+    def test_unknown_root_rejected(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(d)
+            with self.assertRaises(ValueError):
+                mod.course_create(root, "cooking/italian", "pasta", "g", (), ())
+
+    def test_rename_move_preserve_identity_evidence_resume(self):
+        import tempfile, io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(d)
+            c = mod.course_create(**create_kwargs(root))
+            cid = c["course_id"]
+            mod.course_rename(root, cid, "English Prepositions")
+            moved = mod.course_move(root, cid, "languages/english/development",
+                                    ("development",))
+            self.assertEqual(moved["course_id"], cid)
+            st = json.loads((root / moved["rel_path"] / "state.json").read_text(encoding="utf-8"))
+            self.assertEqual(st["course_id"], cid)
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                rc = mod.cmd_course_resume(_ns(courses_root=str(root)))
+            self.assertEqual(rc, 0)
+            # No active set in this flow; resume may be ambiguous — but it
+            # must never surface a wrong identity.
+            out = buf.getvalue()
+            if '"status": "found"' in out:
+                self.assertIn(cid, out)
+
+    def test_concurrent_create_same_course_single_winner(self):
+        import tempfile, threading
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(d)
+            barrier = threading.Barrier(2)
+            outcomes = []
+
+            def attempt():
+                barrier.wait(timeout=10)
+                try:
+                    e = mod.course_create(root, "languages/english/grammar", "in on at",
+                                           "g", (), ("english", "grammar"))
+                    outcomes.append(("ok", e["course_id"]))
+                except Exception as exc:  # noqa: BLE001 — assert below
+                    outcomes.append(("refused", str(exc)))
+
+            threads = [threading.Thread(target=attempt) for _ in range(2)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=60)
+            reg = mod.registry_read(root)
+            ids = [c["course_id"] for c in reg["courses"]]
+            self.assertEqual(len(ids), len(set(ids)))  # no duplicate IDs
+            self.assertLessEqual(len(ids), 2)
+            oks = [o for o in outcomes if o[0] == "ok"]
+            self.assertEqual(len(oks), 1)
+            self.assertIn(oks[0][1], ids)
+
+
+def _cli(*argv):
+    import subprocess
+    script = str(ROOT / "scripts" / "learnprint.py")
+    return subprocess.run([sys.executable, script, *argv],
+                          capture_output=True, text=True, timeout=60)
+
+
+class TestCCliGates(unittest.TestCase):
+    def test_cli_root_alias_end_to_end(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = str(Path(d) / "Courses")
+            self.assertEqual(
+                _cli("course", "init", "--courses-root", root, "--approve").returncode, 0)
+            r = _cli("course", "create", "--courses-root", root,
+                     "--category", "tech/devops", "--title", "cicd",
+                     "--goal", "g", "--confirm-new-segment", "devops",
+                     "--approve")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("technology/devops", r.stdout)
+
+    def test_cli_unknown_root_rejected(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = str(Path(d) / "Courses")
+            self.assertEqual(
+                _cli("course", "init", "--courses-root", root, "--approve").returncode, 0)
+            r = _cli("course", "create", "--courses-root", root,
+                     "--category", "cooking/italian", "--title", "pasta",
+                     "--goal", "g", "--approve")
+            self.assertEqual(r.returncode, 2)
+
+
 if __name__ == "__main__":
     unittest.main()
