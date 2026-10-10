@@ -854,12 +854,33 @@ AGENTS.md instructs agents to call `python scripts/learnprint.py course resolve 
 - `slugify(title)` → safe slug
 - `validate_path(path, courses_root)` → (valid, error)
 - `resolve_course(query, registry)` → found/ambiguous/not_found
-- `create_course(...)` → CourseResult
+- `validate_classification(category_path, registry)` → per-segment parent-scoped verdicts
+- `create_course(...)` → CourseResult (revalidates under lock)
 - `update_registry(...)` → None
 - `generate_dashboard(...)` → str
 
-**LLM-provided inputs (NOT functions in the module):**
-The LLM determines `category_path` for new courses and passes it to `create_course()`. The script validates the category_path. The registry stores `classification_source: "agent"` to mark this is not verified ground truth.
+#### Step 3.2b: Semantic classification contract (LLM responsibility, model-dependent)
+
+Before proposing a location for a NEW course, the agent considers the full request — never keywords alone:
+
+1. Full user request text.
+2. Specific topic and intended capability.
+3. Language of the subject, if relevant.
+4. Primary knowledge domain.
+5. Parent subject and appropriate subtopic.
+6. Existing courses and taxonomy (via `resolve_course` + registry listing).
+7. Current learning goal and relevant session context.
+8. Scope judgment: broad enough to reuse/expand an existing course, or specific enough for a new course.
+
+Distinguish three things the request may conflate:
+
+- What the learner wants to learn ABOUT (subject matter).
+- What LANGUAGE they want to learn or use (medium).
+- What PRACTICAL CAPABILITY they want to achieve (outcome).
+
+**Conversation language is not automatically the subject.** An Indonesian-speaking user asking about DevOps vocabulary is not requesting an English course; "grammar" in "grammar Python" is not the Languages domain. No hardcoded keyword→category mappings exist anywhere in this design — open-ended domains are supported through semantic interpretation plus deterministic validation, not through an enumeration of topics.
+
+Semantic interpretation is performed by the LLM and remains **model-dependent**: two hosts may propose different paths for the same topic. That is expected and harmless, because every proposal passes through the same deterministic gate (Step 3.2a): identity, taxonomy, parent-scoped path validation, aliases, and collisions are checked identically regardless of which model proposed the classification. Never claim deterministic normalization understands meaning. The registry stores `classification_source: "agent"` to mark the proposal is not verified ground truth.
 
 #### Step 3.2a: Model-Independent Routing (routing semantics)
 
@@ -923,29 +944,53 @@ def resolve_course(query, registry, taxonomy):
             ],
             "reason": "normalized title matches multiple courses",
         }
-    # not_found carries sibling hints so the AGENT (not the script) can spot
-    # a probable typo or alternate phrasing and ask the user. The script
-    # itself never fuzzy-matches: hints are display-only data.
+    # not_found carries existing course paths as display-only orientation data
+    # for the AGENT. No segment matching happens here, and nothing returned
+    # here authorizes creation: any new category path must still pass the
+    # parent-scoped validate_classification gate (with its own per-parent
+    # candidates) before create_course.
     return {"status": "not_found", "normalized_query": qn,
             "sibling_hints": sorted({c["category_path"] for c in registry["courses"]})}
 
 
-def validate_classification(category_path, registry, *, allow_new_top=False):
-    """Deterministic pre-creation gate. Never silently 'fixes' a path into a
-    different path, and never auto-corrects spelling. Returns (ok, result).
+def _direct_children(parent_path, registry):
+    """Normalized → canonical names of categories EXACTLY one level below
+    parent_path. parent_path "" means the root level. Only direct children
+    are inspected — never a global pool of segments. This is what makes
+    `languages/japanese/grammar` independent of `languages/english/grammar`:
+    the English branch is simply not in the Japanese parent's scope.
+    """
+    parent_segs = [s for s in parent_path.strip("/").split("/") if s]
+    kids = {}
+    for c in registry.get("courses", []):
+        segs = [s for s in c.get("category_path", "").strip("/").split("/") if s]
+        # Any path passing THROUGH the parent contributes its next segment:
+        # intermediate directories exist even when no course sits directly
+        # at that level (e.g. "english" is a direct child of "languages"
+        # because languages/english/grammar passes through it).
+        if len(segs) > len(parent_segs) and segs[:len(parent_segs)] == parent_segs:
+            nxt = segs[len(parent_segs)]
+            kids.setdefault(normalize_key(nxt), nxt)
+    return kids
 
-    Per-segment verdicts against EXISTING registry paths (exact normalized
-    match) and canonical aliases:
-    - "reuse": segment matches an existing sibling path or a registered
-      canonical alias → reuse the existing spelling. No confirmation needed.
-    - "new-needs-confirmation": segment matches nothing. Creation requires
-      --confirm-new-segment <exact-segment> echoing the proposed spelling.
-      The flag proves the AGENT saw the exact string and took responsibility
-      for the spelling judgment; the script performs no fuzzy matching.
-    - overall "ambiguous": caller must pick a candidate before creating.
+
+def validate_classification(category_path, registry, *, allow_new_top=False):
+    """Parent-scoped deterministic pre-creation gate. Maintains the FULL
+    canonical parent path and inspects ONLY direct children of each resolved
+    parent. Never silently 'fixes' a path, never auto-corrects spelling,
+    never matches segments globally across unrelated branches.
+
+    Per-segment verdicts:
+    - "reuse": normalized segment (or registered canonical alias at root)
+      matches a direct child of the resolved parent → reuse that child's
+      canonical spelling and descend. No confirmation needed.
+    - "new-needs-confirmation": no match among THIS parent's children.
+      Creation requires --confirm-new-segment <exact-segment>.
+    - overall "ambiguous": alias collision across scopes — caller must pick
+      a candidate before creating.
 
     result carries per-segment verdicts plus display-only `candidates`
-    (existing sibling segments) so the agent can spot a probable typo.
+    (direct children of the relevant parent) for agent review.
     """
     segs = [s for s in category_path.strip("/").split("/") if s]
     if not segs:
@@ -960,38 +1005,76 @@ def validate_classification(category_path, registry, *, allow_new_top=False):
                        f"Proposing a new root requires --approve-new-category "
                        f"and user confirmation.")
 
-    existing_paths = {c.get("category_path", "") for c in registry.get("courses", [])}
-    existing_segments = {normalize_key(p) for path in existing_paths
-                         for p in path.strip("/").split("/") if p}
     # Canonical roots and their registered aliases are reusable by definition:
     # proposing technology/... when the root exists in the taxonomy is reuse,
-    # not invention — even if no course lives there yet.
-    canonical_names = set(CANONICAL_CATEGORIES.keys()) | {
-        a for meta in CANONICAL_CATEGORIES.values()
-        for a in meta.get("aliases", [])}
+    # not invention — even if no course lives there yet. (Alias→canonical
+    # mapping is built per segment in the loop below.)
 
-    verdicts, new_segments = [], []
-    for s in segs:
+    resolved, verdicts, new_segments = [], [], []
+    for i, s in enumerate(segs):
+        parent = "/".join(resolved)
+        if i == 0:
+            # Root level: canonical keys plus registered aliases. An alias
+            # resolves to its canonical root spelling ("tech" → "technology").
+            root_pool = {}
+            for key, meta in CANONICAL_CATEGORIES.items():
+                root_pool[normalize_key(key)] = key
+                for a in meta.get("aliases", []):
+                    root_pool.setdefault(normalize_key(a), key)
+            n = normalize_key(s)
+            if n in root_pool:
+                resolved.append(root_pool[n])
+                verdicts.append({"segment": s, "verdict": "reuse",
+                                 "resolved_as": root_pool[n],
+                                 "parent": "(root)"})
+            else:
+                verdicts.append({"segment": s, "verdict": "new-needs-confirmation",
+                                 "parent": "(root)",
+                                 "candidates": sorted(root_pool.values())})
+                resolved.append(s)
+                new_segments.append(s)
+            continue
+        pool = _direct_children(parent, registry)
         n = normalize_key(s)
-        if n in existing_segments or n in canonical_names:
-            verdicts.append({"segment": s, "verdict": "reuse"})
+        if n in pool:
+            # Reuse the canonical existing spelling, not the proposed one:
+            # "Grammar" under languages/english reuses "grammar".
+            resolved.append(pool[n])
+            verdicts.append({"segment": s, "verdict": "reuse",
+                             "resolved_as": pool[n], "parent": parent})
         else:
             verdicts.append({"segment": s, "verdict": "new-needs-confirmation",
-                             "candidates": sorted(existing_segments)})
-            new_segments.append(s)
+                             "parent": parent,
+                             "candidates": sorted(pool.values())})
+            resolved.append(s)  # carry proposed spelling so deeper levels
+            new_segments.append(s)  # scope under the intended (new) parent
     if new_segments:
         return (True, {"verdict": "new-needs-confirmation",
+                       "resolved_path": "/".join(resolved),
                        "segments": verdicts,
                        "requires_flags": [f"--confirm-new-segment {s}"
                                           for s in new_segments]})
-    return (True, {"verdict": "reuse", "segments": verdicts})
+    return (True, {"verdict": "reuse", "resolved_path": "/".join(resolved),
+                   "segments": verdicts})
 
 
 def create_course(category_path, registry, *, confirm_new_segments=()):
-    """Enforces the gate: every non-matching segment must appear verbatim in
-    confirm_new_segments, else creation is REFUSED (no silent duplicates).
-    Legitimate unrelated categories (e.g. a real new subject) pass with the
-    same flags — the flags attest agent review, not typo suspicion.
+    """Enforces the gate, then REVALIDATES under the workspace lock.
+
+    Lock revalidation (C3 §5): the registry may have changed between the
+    agent's validate call and creation — a competing session may have created
+    the same category first. Therefore create_course re-runs
+    validate_classification on a FRESH registry read inside the lock:
+    - gate now says "reuse" everywhere → safe reuse, return existing
+      (no duplicate, no error — convergence, not conflict);
+    - gate still needs confirmations → enforce flags, else REFUSE;
+    - registry now holds a conflicting course (same normalized title in the
+      resolved category, or alias collision) → precise conflict error naming
+      both entries, never a silent second copy.
+    Legitimate unrelated categories pass with the same flags — the flags are
+    an agent-side acknowledgement of the reviewed proposal (NOT proof of
+    human consent) and are covered by the approved workspace scope, so
+    ordinary new subcategories do not re-prompt the user.
     """
     ok, result = validate_classification(category_path, registry)
     if not ok:
@@ -1003,19 +1086,17 @@ def create_course(category_path, registry, *, confirm_new_segments=()):
         if missing:
             raise ValueError(
                 f"new category segments need explicit confirmation: {sorted(missing)}. "
-                f"Existing siblings for review: "
-                f"{result['segments'][0].get('candidates', [])}. "
                 f"Re-run with --confirm-new-segment <segment> per new segment, "
                 f"or reuse an existing path.")
-    # ... proceed with multi-level creation under lock (Step 3.3a rule 6)
-```
+    # ... re-read registry under workspace_lock, re-run gate, then
+    # multi-level creation under the same lock (Step 3.3a rule 6)
 ```
 
 **Routing behavior on the challenged examples** (all model-independent once classification is supplied):
 
 | Scenario | Input | Classification supplied | Deterministic outcome |
 |----------|-------|------------------------|---------------------|
-| Grammar vs typo | "Grammer rules" | agent proposes `languages/english/grammer` | `validate_classification` → `new-needs-confirmation` for segment `grammer`, with `candidates` showing existing sibling `grammar`. `create_course` **refuses** without `--confirm-new-segment grammer`. The agent must reuse `languages/english/grammar`, register a `Grammer → grammar` alias, or ask the user — the script never creates `grammer/` silently and never equates the spellings. |
+| Grammar vs typo | "Grammer rules" | agent proposes `languages/english/grammer` | Parent-scoped gate: under parent `languages/english`, direct children are {`grammar`, …} — `grammer` matches nothing → `new-needs-confirmation` with those parent-scoped candidates. `create_course` **refuses** without `--confirm-new-segment grammer`. The agent must reuse `languages/english/grammar`, register a `Grammer → grammar` alias, or ask the user. Never silently created, never equated. |
 | in/on/at vs its phrasing | "prepositions in on at" | — | `normalize_key` match on **`normalized_aliases`** (registered explicitly at create time) → `found`, `matched_by: "alias"`. No new course. Without a registered alias this is `not_found`, not a guess. |
 | Two "Introduction" courses | "Introduction" | — | Two title matches → `ambiguous` with both `course_id`s listed. Agent asks user. Never guesses. |
 | Java vs Javanese | "Java" | `technology/programming/java` vs `languages/javanese` | Two courses, distinct `course_id`s, distinct normalized titles (`java` vs `javanese`). Both persist. Lookup by normalized title disambiguates deterministically. |
@@ -1023,6 +1104,21 @@ def create_course(category_path, registry, *, confirm_new_segments=()):
 | Relocate | `course move --course-id 550e8400-e29b-41d4-a716-446655440000 --category "languages/english/language-development"` | — | `rel_path` changes; `course_id` and events unchanged. Evidence intact. |
 | Two agents disagree on category | Agent A proposes `technology/docker`, Agent B proposes `technology/devops/docker` | — | First `create` wins the `course_id`. Second `create` for the same normalized title returns `ambiguous` (if a course exists) or the agent must call `course move`. Registry never holds two courses with the same normalized title in the same category — collision check rejects. |
 | Localized request | "Belajar: grammar" vs "Belajar: tata bahasa" | — | `tata bahasa` registers as an alias at create time. Both resolve to one `course_id`. |
+
+**Mandatory semantic acceptance scenarios (A–J).** Expected domain, path, and handling for each. The *classification* column is the LLM's context-aware proposal (model-dependent, per Step 3.2b); the *gate* column is the deterministic outcome that must hold for any model proposing that classification:
+
+| # | Request | Expected classification | Expected handling |
+|---|---------|------------------------|-------------------|
+| A | "Belajar grammar bahasa Indonesia" | `languages/indonesian/grammar` — subject Indonesian, medium Indonesian | Create or reuse a course within that category. Never place under English or Japanese. |
+| B | "Belajar grammar bahasa Jepang" | `languages/japanese/grammar` — separate branch from A | Separate category path. Parent-scoped check: existing `languages/english/grammar` does NOT satisfy this. |
+| C | "Belajar in/on/at" | `languages/english/grammar`, course `in-on-at` | `Courses/Languages/English/Grammar/in-on-at/` (canonical example). |
+| D | "Belajar vocabulary DevOps: CI/CD, IaC, deployment" | `technology/devops`, course `devops-vocabulary` | Do NOT route "vocabulary" to Languages by keyword. Learning ABOUT DevOps in (presumably) Indonesian. |
+| E | "Belajar bahasa Inggris untuk menjelaskan deployment saat meeting" | `languages/english/technical-english` (or closest existing canonical equivalent) | Primary domain is English communication (ABOUT=English, capability=speaking); DevOps is application context, not the course domain. |
+| F | "Belajar grammar Python" | `technology/programming/python` (or closest validated existing course) | The word "grammar" must NOT force Languages. ABOUT=Python syntax. |
+| G | A-request vs B-request | Two distinct paths (A and B above) | Must NOT resolve to one course merely because both contain "grammar". Distinct `course_id`s. |
+| H | "Belajar istilah Docker" vs "Belajar Docker dari nol" | Narrow glossary need vs broad course need | First: check existing Docker course — resolve to a *module* within it if one exists; only a standalone course if scope justifies it. Second: broad course (create or reuse). Never duplicate unnecessarily. |
+| I | Bare "Belajar grammar", several language courses exist | — | Use session/course context if sufficient; otherwise ask ONE meaningful clarification (which language?) instead of guessing. |
+| J | "Belajar tata bahasa Jepang" then later "Belajar Japanese grammar" | Both → the Japanese-grammar course | Resolve to the same course via registered alias (`tata-bahasa-jepang` ⇄ `japanese-grammar`) once either course/alias exists. No duplicate. |
 
 #### Step 3.3: Entity definitions and immutable identity
 
@@ -1133,10 +1229,10 @@ MAX_CATEGORY_DEPTH = 3   # e.g. languages/english/grammar — 3 levels below Cou
 
 1. **Top-level is closed.** A new top-level category requires explicit user confirmation and a registry-schema version bump. The agent may propose one, but never creates one silently.
 2. **Sub-categories are open**, up to `MAX_CATEGORY_DEPTH`, created on demand by reuse-first logic (below).
-3. **Reuse before create.** Before creating `languages/english/grammar`, the resolver checks for an existing normalized match anywhere under `languages/`. If found, reuse it. Only a genuine miss creates a directory.
+3. **Reuse before create — parent-scoped.** Before creating a segment, the gate inspects ONLY the direct children of the resolved canonical parent (Step 3.2a `_direct_children`). An exact normalized or alias match reuses the existing child spelling; anything else needs `--confirm-new-segment`. A match in an unrelated branch never satisfies a different parent: existing `languages/english/grammar` does NOT satisfy proposed `languages/japanese/grammar`, and existing `technology/devops/vocabulary` does NOT satisfy `languages/english/vocabulary`. No global segment pool exists anywhere in this design.
 4. **Normalization.** Every category segment is NFC-normalized, casefolded, and stripped of characters outside `[a-z0-9-]`. Non-Latin segments use the same SHA256 fallback as course slugs. Normalization handles case/punctuation/Unicode variants only — it does **not** equate distinct spellings (`grammer` ≠ `grammar` after normalization). Near-duplicate prevention comes from the `validate_classification` gate (exact-match reuse + mandatory `--confirm-new-segment` for anything unmatched) with sibling candidates shown for agent review — not from normalization.
 5. **Controlled creation.** Creating a new *sub-category* requires the parent to exist and the segment to pass `validate_path`. Creating a new *top-level* category requires `--approve-new-category` plus user confirmation in chat, because it mutates the taxonomy contract itself.
-6. **Multi-level creation in one approved operation.** When a validated path has several missing levels (e.g. `technology/devops/docker` where `devops/` does not exist yet), a single `course create --approve` creates all missing levels under the workspace lock, after the FULL path passes `validate_path`. Each created level is reported. This avoids forcing the user to design the folder tree level by level, while keeping one approval boundary and one lock scope. A missing *top-level root* is never created this way — it still requires `--approve-new-category`.
+6. **Multi-level creation in one approved operation.** When a validated path has several missing levels (e.g. `technology/devops/docker` where `devops/` does not exist yet), a single `course create --approve` creates all missing levels under the workspace lock, traversing parent-by-parent per the gate's resolved path, after the FULL path passes `validate_path`. Each created level is reported. This avoids forcing the user to design the folder tree level by level, while keeping one approval boundary and one lock scope. A missing *top-level root* is never created this way — it still requires `--approve-new-category`.
 
 **Why a closed top-level set:** uncontrolled taxonomy growth is how a workspace degrades into `Courses/misc/`, `Courses/other/`, `Courses/tmp/`. Eight canonical roots cover realistic personal-learning use; anything else is a deliberate, confirmed decision.
 
@@ -1147,6 +1243,14 @@ MAX_CATEGORY_DEPTH = 3   # e.g. languages/english/grammar — 3 levels below Cou
 | Category | No (namespace only) | Yes | No | Reuse-first; `--approve-new-category` for new roots |
 | Course | **Yes** (`course_id`, immutable) | Yes | **Yes** | `course create` |
 | Module | No (course-internal) | No | No, only as `<course_id>#<competency_id>` | Agent during syllabus authoring |
+
+**One consistent routing decision contract (no second storage model, no engine redesign):**
+
+1. `resolve_course()` first — exact course, alias, then title. A hit ends the decision: reuse, never recreate.
+2. Broad request vs existing course: the agent compares scope and learning goal against the found course. Same scope → reuse and continue; strictly wider scope the existing course cannot absorb → new course; narrower need inside an existing course's domain (scenario H, "istilah Docker" with a Docker course present) → a MODULE within that course, recorded against its `course_id` with a new `competency_id`. Wording variation alone never justifies a new course.
+3. Narrow request with no covering course → standalone course only if the scope + learning goal warrant an independently resumable program; otherwise a module of the closest course.
+4. Structural invariant: a course directory is never silently converted into a category directory or vice versa. `course create` refuses a path that collides with an existing course directory's location as a category prefix, and `validate_path` refuses a category path that lands inside an existing course directory. Category depth (`MAX_CATEGORY_DEPTH`, category segments only) and course placement (one slug level below its parent category) are counted separately.
+5. Rename/move preserve `course_id`, evidence references, and — unless `--update-path` passes — existing paths.
 
 #### Step 3.4: Registry schema (`schemas/course-registry.schema.json`)
 
@@ -2084,8 +2188,8 @@ Do NOT load: all courses, full events.jsonl, registry, entire conversation histo
 | **X4** | **course_id immutable across relocate** | test_routing.py | `test_move_preserves_course_id`, `test_move_preserves_event_references`, `test_move_updates_rel_path` | Unit |
 | **X5** | **Evidence survives relocation** | test_routing.py | `test_evidence_resolves_after_move`, `test_progress_identical_before_and_after_move` | Unit |
 | **X6** | **Alias collision rejected** | test_routing.py | `test_alias_collision_refused`, `test_alias_collision_reports_both_courses` | Unit |
-| **X7** | **Canonical taxonomy enforced** | test_routing.py | `test_unknown_top_level_rejected`, `test_new_top_level_requires_flag`, `test_reuse_before_create`, `test_grammer_segment_needs_confirmation`, `test_create_without_confirmation_refused`, `test_confirm_new_segment_exact_echo`, `test_legitimate_new_subject_passes_with_flags` | Unit |
-| **X8** | **Routing is model-independent** | test_routing.py | `test_grammar_typo_gated_not_silently_created`, `test_alias_resolves_same_course`, `test_two_introductions_ambiguous`, `test_java_vs_javanese_distinct` | Unit |
+| **X7** | **Canonical taxonomy enforced (parent-scoped)** | test_routing.py | `test_unknown_top_level_rejected`, `test_new_top_level_requires_flag`, `test_reuse_before_create`, `test_grammer_segment_needs_confirmation`, `test_create_without_confirmation_refused`, `test_confirm_new_segment_exact_echo`, `test_legitimate_new_subject_passes_with_flags`, `test_japanese_grammar_not_satisfied_by_english`, `test_grammar_case_reuse_same_category`, `test_vocab_parent_scoped_devops_vs_english`, `test_same_child_name_different_parents`, `test_root_alias_resolves_canonical`, `test_create_revalidates_under_lock` | Unit |
+| **X8** | **Routing is model-independent** | test_routing.py | `test_grammar_typo_gated_not_silently_created`, `test_alias_resolves_same_course`, `test_two_introductions_ambiguous`, `test_java_vs_javanese_distinct`, `test_semantic_scenarios_a_to_j_gate_outcomes` | Unit |
 | **X9** | **Retention threshold is policy, not science** | test_progress_regression.py | `test_retention_threshold_configurable`, `test_immediate_retest_not_maintained`, `test_min_elapsed_boundary` | Unit |
 | **X10** | **Fresh delayed pass clears stale due** | test_progress_regression.py | `test_fresh_delayed_pass_clears_retention_due`, `test_precycle_failure_does_not_dominate_new_cycle`, `test_due_date_from_current_cycle` | Unit |
 | **X11** | **Name strings confer no tier; basis comes from linkage** | test_trust.py | `test_verified_by_string_confers_nothing`, `test_learner_confirm_establishes_basis`, `test_correction_supersedes_original`, `test_two_source_substantiation`, `test_unlinked_cross_course_not_substantiated`, `test_dangling_confirmation_raises` | Unit |
@@ -2103,7 +2207,7 @@ Do NOT load: all courses, full events.jsonl, registry, entire conversation histo
 | Frozen req | Satisfied by plan sections | Acceptance gate |
 |------------|---------------------------|-----------------|
 | F1 Single-root learning | Operational UX flow; `course resolve/create/resume` from repo root; Step 9.1 | C9 matrix rows 1–2, 8; Req H |
-| F2 Automatic consistent organization | Steps 3.2a, 3.3, 3.3a, 3.4 (taxonomy, aliases, immutable ID, no-merge rules) | C9 matrix row 4; Reqs A–G, P, P2, X3–X8 |
+| F2 Automatic consistent organization | Steps 3.2a, 3.2b, 3.3, 3.3a, 3.4 (semantic classification, parent-scoped taxonomy, aliases, immutable ID, no-merge rules) | C9 matrix rows 4, 12–13; Reqs A–G, P, P2, X3–X8 |
 | F3 Personalized adaptive learning | Steps 2.1–2.3 (profile precedence, retained skill generation); protocols untouched | C9 matrix rows 2–3, 5–7; Reqs N, V, X16 |
 | F4 Honest evidence-based progress | Steps 1.1–1.4 (one evaluator, basis labels, shared snapshot, stale-queue drop) | C9 matrix rows 5–6, 9; Reqs J, K–K3, X9–X12 |
 | F5 Durable private learning data | Steps 4.1–4.6, 5.1–5.5 (fail-closed ledger, durable writes, locking, gitignore) | C9 matrix rows 8–9; Reqs F, L, T, X1–X2, X13–X14 |
@@ -2127,6 +2231,8 @@ Portable teaching behavior, checked live per host after implementation (no new p
 | 9 | Delayed review | Due review exists | Review scheduled from current cycle; stale queue entries dropped (C5 test) | Unit + live |
 | 10 | Small-context fallback | Constrained model | Loads only the ~330-line budget (Stage 9.2); degrades gracefully, never fabricates | Live |
 | 11 | Host without filesystem access | Writes denied | Tier 0 prompt-only mode; honest "not written" report; no fake paths | Live |
+| 12 | Context-aware classification: "vocabulary DevOps" vs "grammar Python" | Empty registry | DevOps vocab → `technology/devops/…` (not Languages); Python grammar → `technology/programming/…` (not Languages); "grammar" never forces a domain by keyword | Live |
+| 13 | Cross-language same course: "tata bahasa Jepang" then "Japanese grammar" | Japanese-grammar course or alias exists | Both resolve to the same `course_id` via registered alias; no duplicate course | Unit (X8) + live |
 
 Host compatibility is claimed ONLY after the per-host checklist (Requirement R) passes on that host — never from documented discovery paths alone.
 
@@ -2152,7 +2258,7 @@ Agent flow (all from repo root):
 1. Agent reads AGENTS.md → sees workspace instructions
 2. Runs `python scripts/learnprint.py course resolve --query "in/on/at"`
 3. Result: found (existing course) OR not_found (new course needed)
-4. If not_found: agent classifies topic, runs `course create` with --approve
+4. If not_found: agent classifies with FULL context (subject ABOUT vs language medium vs capability outcome — Step 3.2b, never keywords alone), then runs `course create` with --approve
 5. Agent loads course state.json, HANDOFF.md, and profile
 6. Agent invokes learnprint-learn skill
 7. Teaching begins from repo root. No cd.
