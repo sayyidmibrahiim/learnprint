@@ -177,6 +177,40 @@ class TestCourseCLI(unittest.TestCase):
         with self.assertRaises(ValueError):
             mod.cmd_course_dashboard(args(courses_root=str(self.root)))
 
+    def test_end_to_end_learn_flow(self):
+        # init -> create -> record app+transfer -> plan-reviews -> dashboard -> resume
+        c = self.mk("languages/english/grammar", "in on at")
+        cid = c["course_id"]
+        # give the course a competency scope
+        st_path = self.root / c["rel_path"] / "state.json"
+        st = json.loads(st_path.read_text(encoding="utf-8"))
+        st["learning_scope"] = [{"id": "c1", "name": "Use in/on/at", "status": "unknown",
+                                 "evidence_ids": [], "due_at": None}]
+        st_path.write_text(json.dumps(st, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+        def record(eid, kind, rubric):
+            a = args(workspace=str(self.root), event_id=eid, topic=cid, competency="c1",
+                     task_type=kind, answer="a", rubric=rubric, expected="r", feedback="f",
+                     grader="ai_reviewed", help="none", confidence=None, approve=True,
+                     course_id=cid, grader_source=None, confirms=None, corrects=None,
+                     corroborates=None)
+            self.assertEqual(mod.cmd_record(a), 0)
+
+        record("e-app", "independent_application",
+               '{"concept": 2, "mechanism": 2, "application": 2, "transfer": 2}')
+        record("e-tra", "novel_transfer",
+               '{"concept": 2, "mechanism": 2, "application": 2, "transfer": 2}')
+        rc, out = run(mod.cmd_course_plan_reviews, args(courses_root=str(self.root)))
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(json.loads(out)["reviews"]), 1)
+        rc, _ = run(mod.cmd_course_dashboard, args(courses_root=str(self.root)))
+        self.assertEqual(rc, 0)
+        index = (self.root / "INDEX.md").read_text(encoding="utf-8")
+        self.assertIn("[provisional]", index)
+        self.assertIn("demonstrated: 1", index)
+        rc, out = run(mod.cmd_course_resume, args(courses_root=str(self.root)))
+        self.assertEqual(json.loads(out)["course"]["course_id"], cid)
+
 
 if __name__ == "__main__":
     unittest.main()
