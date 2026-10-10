@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
+import os
 import re
 import shutil
 import sys
@@ -111,6 +113,169 @@ def events_read(path):
         except json.JSONDecodeError as e: raise ValueError(f"events.jsonl line {lineno}: {e}")
         out.append(item)
     return out
+
+
+def _write_all(fd, data: bytes) -> None:
+    """os.write() may perform a SHORT write. Loop until all bytes are out."""
+    view = memoryview(data)
+    while view:
+        n = os.write(fd, view)
+        if n <= 0:
+            raise OSError("os.write returned no progress")
+        view = view[n:]
+
+
+def append_event_line(path, line: str, durable: bool = True) -> None:
+    """Crash-safe single-line append to a JSONL ledger.
+
+    Payload + trailing newline go out as ONE write so an interrupted append
+    cannot produce a record without its terminator.
+    """
+    path = Path(path)
+    payload = (line + "\n").encode("utf-8")
+    fd = os.open(str(path), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    try:
+        _write_all(fd, payload)
+        if durable:
+            os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def ledger_diagnose(path, workspace_root=None):
+    """READ-ONLY diagnostic. Never mutates. Returns a damage report.
+
+    Triage data for humans and `course validate` ONLY — its output must
+    never feed progress(), reports, scheduling, or any mutation.
+    """
+    path = Path(path)
+    if not path.exists():
+        initialized = (workspace_root is not None
+                       and (Path(workspace_root) / ".learnprint").exists())
+        return {"status": "absent", "path": str(path), "records": 0,
+                "damage": [],
+                "absent_kind": ("missing-expected" if initialized
+                                else "workspace-not-initialized")}
+    raw = path.read_bytes()
+    damage = []
+    records = 0
+    offset = 0
+    for line_no, raw_line in enumerate(raw.split(b"\n"), 1):
+        stripped = raw_line.strip()
+        if stripped:
+            try:
+                json.loads(stripped.decode("utf-8"))
+                records += 1
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                damage.append({
+                    "line_no": line_no,
+                    "byte_offset": offset,
+                    "reason": str(exc),
+                    "raw_bytes_preserved": True,
+                    "is_truncated_tail": not raw.endswith(b"\n") and line_no == raw.count(b"\n") + 1,
+                })
+        offset += len(raw_line) + 1
+    return {
+        "status": "damaged" if damage else "ok",
+        "path": str(path),
+        "records": records,
+        "damage": damage,
+        "sha256": hashlib.sha256(raw).hexdigest(),
+    }
+
+
+def ledger_read_trusted(path, workspace_root=None):
+    """STRICT read for authoritative consumers (progress, reports, scheduling).
+
+    Three layers: presence (missing-expected raises LedgerMissing; 0-byte
+    file is a legitimate empty ledger), syntax + validate_event() schema
+    (valid JSON that is not a valid event raises LedgerDamage), uniqueness
+    (duplicate event_id raises LedgerDamage). Callers MUST NOT catch these
+    and continue with partial data.
+    """
+    path = Path(path)
+    if not path.exists():
+        initialized = (workspace_root is not None
+                       and (Path(workspace_root) / ".learnprint").exists())
+        if initialized:
+            raise LedgerMissing(f"expected evidence ledger absent: {path}")
+        raise WorkspaceNotInitialized(
+            f"no workspace at {workspace_root}; run course init first")
+    raw = path.read_bytes()
+    if not raw.strip():
+        return []
+    events = []
+    seen_ids = set()
+    offset = 0
+    for line_no, raw_line in enumerate(raw.split(b"\n"), 1):
+        stripped = raw_line.strip()
+        if stripped:
+            try:
+                record = json.loads(stripped.decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                raise LedgerDamage(f"ledger {path} line {line_no} (byte {offset}): {exc}")
+            schema_error = validate_event(record)
+            if schema_error:
+                raise LedgerDamage(f"ledger {path} line {line_no} (byte {offset}): "
+                                   f"schema: {schema_error}")
+            eid = record.get("event_id")
+            if eid in seen_ids:
+                raise LedgerDamage(f"ledger {path} line {line_no} (byte {offset}): "
+                                   f"duplicate event_id: {eid!r}")
+            seen_ids.add(eid)
+            events.append(record)
+        offset += len(raw_line) + 1
+    return events
+
+
+def ledger_repair_truncate_partial_tail(path):
+    """EXPLICIT non-destructive repair for a truncated final record only.
+
+    Allocates its own immutable uniquely-named backup
+    (<name>.bak.<UTC-ts>.<sha8>); refuses if that name exists. Audit entry
+    (pre/post SHA256) is appended via the durable locked primitive.
+    """
+    path = Path(path)
+    report = ledger_diagnose(path)
+    if report["status"] != "damaged":
+        return report
+    tail = [d for d in report["damage"] if d["is_truncated_tail"]]
+    others = [d for d in report["damage"] if not d["is_truncated_tail"]]
+    if others:
+        raise LedgerDamage(
+            f"ledger {path} line {others[0]['line_no']}: "
+            f"{len(others)} damaged record(s) that are not a truncated tail; "
+            "manual review required")
+    if len(tail) != 1:
+        raise LedgerDamage(f"ledger {path}: multiple damaged tail records; "
+                           "manual review required")
+
+    raw = path.read_bytes()
+    cut = tail[0]["byte_offset"]
+    sha8 = hashlib.sha256(raw).hexdigest()[:8]
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup_path = path.parent / f"{path.name}.bak.{stamp}.{sha8}"
+    if backup_path.exists():
+        raise LedgerDamage(f"ledger {path}: backup {backup_path.name} already "
+                           "exists; refusing to overwrite a previous backup")
+    with open(backup_path, "wb") as fh:
+        fh.write(raw)
+    with open(path, "r+b") as fh:
+        fh.truncate(cut)
+    log = {
+        "repaired_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "original_sha256": report["sha256"],
+        "backup_path": str(backup_path),
+        "backup_sha256": hashlib.sha256(raw).hexdigest(),
+        "repaired_sha256": hashlib.sha256(raw[:cut]).hexdigest(),
+        "removed_byte_offset": cut,
+        "removed_line_no": tail[0]["line_no"],
+        "removed_reason": "truncated tail from interrupted append",
+        "raw_removed_bytes": raw[cut:].hex(),
+    }
+    append_event_line(path.parent / "recovery-log.jsonl",
+                      json.dumps(log, ensure_ascii=False), durable=True)
+    return ledger_diagnose(path)
 
 
 def validate_event(e):
@@ -622,9 +787,11 @@ def cmd_record(a):
        "is_synthetic_example":False}
     errs=validate_event(e)
     if errs: raise ValueError("Invalid event: "+"; ".join(errs))
-    known={x.get("event_id") for x in events_read(p)}
-    if e["event_id"] in known: raise ValueError("Duplicate event_id")
-    with p.open("a",encoding="utf-8") as f: f.write(json.dumps(e,ensure_ascii=False)+"\n")
+    # C1/C7: full trusted pre-flight (schema + uniqueness), never diagnose-only.
+    existing = ledger_read_trusted(p, workspace_root=w)
+    if e["event_id"] in {x.get("event_id") for x in existing}:
+        raise ValueError("Duplicate event_id")
+    append_event_line(p, json.dumps(e, ensure_ascii=False))
     print(f"RECORDED: {a.event_id}; grading supplied by {a.grader}, NOT independently verified by script")
     return 0
 
