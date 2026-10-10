@@ -170,7 +170,9 @@ def main(argv=None):
     if a.self:
         for n in PACKAGED_SKILLS:
             rel = f"{TARGETS[a.target]}/{n}/"
-            print(f"{ROOT / 'skills' / n} -> {dest / TARGETS[a.target] / n}")
+            print(f"{ROOT / 'skills' / n} -> {dest / TARGETS[a.target] / n} {'(DRY RUN)' if a.dry_run else ''}")
+            if a.dry_run:
+                continue
             rc = ensure_gitignored(dest, rel)
             if rc != 0:
                 return rc
