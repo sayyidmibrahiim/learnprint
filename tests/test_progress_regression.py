@@ -271,12 +271,30 @@ class TestProgressRegression(unittest.TestCase):
         self.assertEqual(s["status"], "maintained")
         self.assertEqual(rev["due_at"], s["due_at"])
 
-    def test_single_evaluator_no_drift(self):
-        import inspect
-        src = inspect.getsource(mod.reviews_from_events)
-        self.assertIn("_evaluate_competency", src)
-        self.assertNotIn("for x in reversed(", src)
-        self.assertNotIn("passed_delayed", src)
+    def test_progress_reviews_never_drift(self):
+        # Behavioral drift guard (replaces source-inspection): across a
+        # battery of scenarios, the scheduled due_at always equals the
+        # progress-reported due_at. A review entry exists iff a demonstration
+        # cycle exists (including needs_review, which schedules remediation).
+        # Any duplicated/diverged cycle logic breaks this agreement.
+        scenarios = [
+            ([app("a", H(0)), tra("t", H(1))], True),
+            ([app("a", H(0)), tra("t", H(1)), dla("d1", H(26))], True),
+            ([app("a", H(0)), tra("t", H(1)), dla("d1", H(26), ok=False)], True),
+            ([app("a", H(0))], False),
+            ([], False),
+        ]
+        for events, expect_entry in scenarios:
+            t = topic()
+            last = max([mod._parse_dt(e["date"]) for e in events],
+                       default=mod._parse_dt(H(0)))
+            now = last + _dt.timedelta(hours=1)
+            comp = mod.progress(t, events, now=now)["competencies"][0]
+            revs = mod.reviews_from_events([t], events)["reviews"]
+            self.assertEqual(len(revs), 1 if expect_entry else 0)
+            if expect_entry:
+                self.assertEqual(revs[0]["due_at"], comp["due_at"])
+                self.assertEqual(revs[0]["cycle_start"], comp["cycle_start"])
 
     def test_stale_review_queue_superseded(self):
         t = topic()

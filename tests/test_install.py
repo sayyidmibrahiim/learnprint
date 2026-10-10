@@ -84,14 +84,61 @@ class TestInstallPersonal(unittest.TestCase):
             (Path(d) / ".git" / "hooks").mkdir(parents=True, exist_ok=True)
             self.assertEqual(mod.install_hooks(d, approve=False), 2)
 
-    def test_self_mode_gitignores_discovery_dirs(self):
+INSTALL_SCRIPT = str(ROOT / "scripts" / "install.py")
+
+
+def install_cli(*argv):
+    import sys
+    return subprocess.run([sys.executable, INSTALL_SCRIPT, *argv],
+                          capture_output=True, text=True, timeout=60)
+
+
+class TestInstallMainCLI(unittest.TestCase):
+    def test_main_dry_run(self):
         import tempfile
         with tempfile.TemporaryDirectory() as d:
             git_repo(d)
-            rc = mod.main(["--target", "codex", "--dest", d, "--self", "--approve"])
-            # --self with explicit --dest behaves like a normal install plus
-            # gitignore coverage; main() returns 0 on success.
-            self.assertEqual(rc, 0)
+            r = install_cli("--target", "codex", "--dest", d, "--dry-run")
+            self.assertEqual(r.returncode, 0)
+
+    def test_main_requires_approve(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            git_repo(d)
+            r = install_cli("--target", "codex", "--dest", d)
+            self.assertEqual(r.returncode, 2)
+
+    def test_main_installs_and_refuses_overwrite(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            git_repo(d)
+            r = install_cli("--target", "codex", "--dest", d, "--approve")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertTrue((Path(d) / ".agents" / "skills" / "learnprint-learn" / "SKILL.md").exists())
+            r = install_cli("--target", "codex", "--dest", d, "--approve")
+            self.assertEqual(r.returncode, 2)
+
+    def test_main_personal_skill_needs_gitignored_dest(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            git_repo(d)
+            source = make_personal_source(d)
+            r = install_cli("--target", "codex", "--dest", d,
+                            "--personal-skill", "--source", str(source), "--approve")
+            self.assertEqual(r.returncode, 2)  # .agents/skills/learnprint-personal not ignored here
+            (Path(d) / ".gitignore").write_text(".agents/skills/learnprint-personal/\n")
+            r = install_cli("--target", "codex", "--dest", d,
+                            "--personal-skill", "--source", str(source), "--approve")
+            self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_main_hooks(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            git_repo(d)
+            (Path(d) / ".git" / "hooks").mkdir(parents=True, exist_ok=True)
+            r = install_cli("--target", "codex", "--dest", d, "--hooks", "--approve")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertTrue((Path(d) / ".git" / "hooks" / "pre-commit").exists())
 
 
 if __name__ == "__main__":

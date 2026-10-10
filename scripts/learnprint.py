@@ -23,7 +23,6 @@ DEMO_TYPES = {"independent_application", "novel_transfer", "delayed_retrieval"}
 GRADER_SOURCES = {"agent", "learner", "third_party"}
 TIER_BASIS = {"provisional", "learner_confirmed", "substantiated"}
 SOURCE_STATUSES = {"verified", "UNVERIFIED", "learner-reported", "agent-generated", "unknown"}
-_COURSE_ID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 
 
 def load(path):
@@ -488,7 +487,7 @@ def validate_event(e):
     # and is NEVER used for tiering (see evidence_basis).
     if "course_id" in e and not isinstance(e["course_id"], str):
         errs.append("course_id must be string")
-    elif isinstance(e.get("course_id"), str) and not _COURSE_ID_RE.match(e["course_id"]):
+    elif isinstance(e.get("course_id"), str) and not routing.is_course_id(e["course_id"]):
         errs.append("course_id must be UUIDv4")
     if "grader_source" in e and e["grader_source"] not in GRADER_SOURCES:
         errs.append("invalid event.grader_source")
@@ -757,6 +756,7 @@ def progress(topic, events, now=None, policy=None, registry=None):
             "delayed_pass": detail["delayed_pass"],
             "due_at": detail["fresh_due_at"],
             "interval_days": detail["interval_days"],
+            "cycle_start": detail["cycle_start"],
         })
 
     denominator = len(results)

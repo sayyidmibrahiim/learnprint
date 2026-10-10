@@ -162,7 +162,7 @@ class TestMigration(unittest.TestCase):
             rep = mod.load(dest / ".learnprint" / "migration-report.json")
             self.assertEqual(set(rep["mapping"]), {"t1", "t2"})
             for cid in rep["mapping"].values():
-                self.assertRegex(cid, mod.routing._COURSE_ID_RE)
+                self.assertTrue(mod.routing.is_course_id(cid))
 
     def test_migrate_retry_reuses_course_ids(self):
         import tempfile

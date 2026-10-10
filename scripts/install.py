@@ -155,6 +155,15 @@ def main(argv=None):
     dest = Path(a.dest).expanduser().resolve() if a.dest else ROOT
     if a.hooks:
         return install_hooks(dest, a.dry_run, a.approve)
+    if a.personal_skill:
+        if not a.source:
+            return _fail("--personal-skill requires --source <Courses/.learnprint>")
+        # Preflight BEFORE any writes so a refused personal install leaves
+        # no partial packaged-skill behind.
+        rc = install_personal_skill(a.source, dest / TARGETS[a.target] / PERSONAL_SKILL,
+                                    dry_run=True)
+        if rc != 0:
+            return rc
     rc = install_skills(dest, a.target, a.dry_run, a.approve)
     if rc != 0:
         return rc
@@ -166,8 +175,6 @@ def main(argv=None):
             if rc != 0:
                 return rc
     if a.personal_skill:
-        if not a.source:
-            return _fail("--personal-skill requires --source <Courses/.learnprint>")
         return install_personal_skill(a.source, dest / TARGETS[a.target] / PERSONAL_SKILL,
                                       a.dry_run, a.approve)
     return 0

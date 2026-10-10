@@ -61,6 +61,11 @@ def slugify(title):
     return s
 
 
+def is_course_id(value):
+    """Public predicate: value is a well-formed immutable course UUID."""
+    return isinstance(value, str) and bool(_COURSE_ID_RE.match(value))
+
+
 def allocate_course_id(registry):
     """Allocate an immutable UUIDv4 course_id, never derived from mutable
     title/category/path/slug. Registry uniqueness check rejects collisions."""

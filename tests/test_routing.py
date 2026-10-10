@@ -102,7 +102,7 @@ class TestIdentity(unittest.TestCase):
             root = mkroot(d)
             c = mkcourse(root, "languages/english/grammar", "in on at")
             cid = c["course_id"]
-            self.assertRegex(cid, rt._COURSE_ID_RE)
+            self.assertTrue(rt.is_course_id(cid))
             r = mod.course_rename(root, cid, "English Prepositions")
             self.assertEqual(r["course_id"], cid)
             self.assertEqual(r["title"], "English Prepositions")
