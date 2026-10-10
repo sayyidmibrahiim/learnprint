@@ -133,13 +133,197 @@ def append_event_line(path, line: str, durable: bool = True) -> None:
     """
     path = Path(path)
     payload = (line + "\n").encode("utf-8")
-    fd = os.open(str(path), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    # O_BINARY (no-op on POSIX): without it Windows translates \n to \r\n,
+    # corrupting byte offsets used by ledger diagnostics and repair.
+    flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_BINARY", 0)
+    fd = os.open(str(path), flags, 0o600)
     try:
         _write_all(fd, payload)
         if durable:
             os.fsync(fd)
     finally:
         os.close(fd)
+
+
+def _fsync_dir(directory) -> None:
+    """Best-effort directory-entry durability. POSIX fsyncs the directory fd;
+    Windows skips (directory fsync unsupported) — file-data fsync still holds.
+    """
+    if sys.platform == "win32":
+        return
+    try:
+        dir_fd = os.open(str(directory), os.O_RDONLY | os.O_DIRECTORY)
+    except (OSError, AttributeError):
+        return
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
+
+
+def atomic_write(path, content: str, durable: bool = True) -> None:
+    """Atomically replace path via unique temp file + os.replace().
+
+    durable=True adds file fsync and best-effort directory fsync. Replace
+    gives atomic VISIBILITY, not multi-file transactions.
+    """
+    import tempfile
+    path = Path(path)
+    data = content.encode("utf-8")
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp",
+                               prefix=path.stem + "_")
+    try:
+        _write_all(fd, data)
+        if durable:
+            os.fsync(fd)
+        os.close(fd)
+        fd = -1
+        os.replace(tmp, str(path))
+        if durable:
+            _fsync_dir(path.parent)
+    except BaseException:
+        if fd >= 0:
+            os.close(fd)
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+def workspace_lock(courses_root, timeout_seconds: int = 5):
+    """Advisory exclusive lock on Courses/.learnprint/.lock.
+
+    Context manager yielding None. Every mutating workspace command holds it
+    for its whole read-modify-write sequence; pure readers never take it.
+    The lock FILE is persistent infrastructure: it is created on demand and
+    NEVER deleted as recovery (deleting it under a holder splits the lock).
+    """
+    import time
+    if sys.platform == "win32":
+        import msvcrt
+    else:
+        import fcntl
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _lock():
+        lock_path = Path(courses_root) / ".learnprint" / ".lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        f = lock_path.open("w")
+        deadline = time.monotonic() + timeout_seconds
+        try:
+            while True:
+                try:
+                    if sys.platform == "win32":
+                        msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+                    else:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except (IOError, OSError):
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(
+                            "Could not acquire workspace lock within "
+                            f"{timeout_seconds}s. Another Learnprint process "
+                            "may be running. Wait for it to finish.")
+                    time.sleep(0.1)
+            yield
+        finally:
+            if sys.platform == "win32":
+                try:
+                    msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+                except OSError:
+                    pass
+            f.close()
+    return _lock()
+
+
+APPROVAL_SCOPE_TOKENS = {"workspace-create", "course-create", "event-append",
+                         "state-update", "dashboard-write", "profile-write"}
+
+
+def read_approval(courses_root):
+    """Read the standing-approval record. Returns dict, or None if absent.
+
+    The record documents claimed scope; it is NOT proof of human consent and
+    its provenance cannot be attested. Schema/scope coherence IS checked.
+    """
+    p = Path(courses_root) / ".learnprint" / "approval.json"
+    if not p.exists():
+        return None
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    if data.get("schema_version") != "1.0":
+        return None
+    scope = data.get("scope")
+    if not isinstance(scope, list) or not all(isinstance(s, str) for s in scope):
+        return None
+    if any(s not in APPROVAL_SCOPE_TOKENS for s in scope):
+        return None
+    if not isinstance(data.get("revoked"), bool):
+        return None
+    return data
+
+
+def write_approval(courses_root, scope=None, granted_by="chat-approval"):
+    """Record a scope agreement. Called only via `course init --approve` after
+    the agent asserts chat approval was obtained, or via tests."""
+    scope = list(scope or ["workspace-create", "course-create", "event-append",
+                           "state-update", "dashboard-write", "profile-write"])
+    if any(s not in APPROVAL_SCOPE_TOKENS for s in scope):
+        raise ValueError(f"unknown scope token in {scope}")
+    rec = {"schema_version": "1.0",
+           "granted_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+           "granted_by": granted_by,
+           "scope": scope,
+           "revoked": False, "revoked_at": None}
+    d = Path(courses_root) / ".learnprint"
+    d.mkdir(parents=True, exist_ok=True)
+    atomic_write(d / "approval.json", json.dumps(rec, ensure_ascii=False, indent=2) + "\n")
+    return rec
+
+
+def revoke_approval(courses_root):
+    """Flip revoked=True. All mutating commands refuse until a new grant."""
+    current = read_approval(courses_root)
+    if current is None:
+        raise ValueError("no standing approval to revoke")
+    current["revoked"] = True
+    current["revoked_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+    d = Path(courses_root) / ".learnprint"
+    atomic_write(d / "approval.json", json.dumps(current, ensure_ascii=False, indent=2) + "\n")
+    return current
+
+
+def approval_allows(approval, operation):
+    """True iff a live (present, unrevoked) grant covers the operation."""
+    if not isinstance(approval, dict):
+        return False
+    if approval.get("revoked"):
+        return False
+    return operation in (approval.get("scope") or [])
+
+
+# Code-level lock policy declaration (plan Step 4.2). Rule: every mutator
+# locks, every pure reader does not. Deliberately outside any grantable
+# scope: publish, global install, delete, outside-Courses writes,
+# destructive git, network access.
+LOCK_TABLE = {
+    "course init": {"mutates": True, "locks": True},
+    "course create": {"mutates": True, "locks": True},
+    "course rename": {"mutates": True, "locks": True},
+    "course move": {"mutates": True, "locks": True},
+    "record": {"mutates": True, "locks": True},
+    "plan-reviews": {"mutates": True, "locks": True},
+    "course validate --repair": {"mutates": True, "locks": True},
+    "migrate": {"mutates": True, "locks": True},
+    "course dashboard": {"mutates": True, "locks": True},
+    "course resolve": {"mutates": False, "locks": False},
+    "course list": {"mutates": False, "locks": False},
+    "report": {"mutates": False, "locks": False},
+}
 
 
 def ledger_diagnose(path, workspace_root=None):

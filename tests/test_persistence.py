@@ -259,5 +259,149 @@ class TestLedgerIntegrity(unittest.TestCase):
             self.assertIsInstance(rep["records"], int)
 
 
+class TestAtomicWritesAndLocks(unittest.TestCase):
+    def test_atomic_write_handles_short_write(self):
+        import tempfile
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "f.json"
+            content = '{"key": "value-%s"}' % ("x" * 5000)
+            real_write = mod.os.write
+            calls = []
+
+            def flaky(fd, data):
+                calls.append(len(memoryview(data)))
+                if len(calls) == 1 and len(memoryview(data)) > 100:
+                    return real_write(fd, memoryview(data)[:100])
+                return real_write(fd, data)
+
+            with mock.patch.object(mod.os, "write", side_effect=flaky):
+                mod.atomic_write(p, content)
+            self.assertEqual(p.read_text(encoding="utf-8"), content)
+            self.assertEqual(list(Path(d).glob("*.tmp")), [])
+            self.assertTrue(len(calls) >= 2)
+
+    def test_atomic_write_roundtrip_and_tmp_cleanup(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "sub" / "f.json"
+            p.parent.mkdir()
+            mod.atomic_write(p, '{"a": 1}')
+            self.assertEqual(p.read_text(encoding="utf-8"), '{"a": 1}')
+            self.assertEqual(list(Path(d).rglob("*.tmp")), [])
+
+    def test_append_writes_payload_and_newline_together(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "events.jsonl"
+            line = json.dumps(GOOD, ensure_ascii=False)
+            mod.append_event_line(p, line)
+            raw = p.read_bytes()
+            self.assertTrue(raw.endswith(b"\n"))
+            self.assertEqual(raw, (line + "\n").encode("utf-8"))
+            self.assertEqual(mod.ledger_read_trusted(p), [GOOD])
+
+    def test_lock_contention(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "Courses"
+            with mod.workspace_lock(root, timeout_seconds=5):
+                with self.assertRaises(TimeoutError):
+                    with mod.workspace_lock(root, timeout_seconds=0.3):
+                        pass
+
+    def test_lock_not_deleted_on_contention(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "Courses"
+            lock = root / ".learnprint" / ".lock"
+            with mod.workspace_lock(root, timeout_seconds=5):
+                try:
+                    with mod.workspace_lock(root, timeout_seconds=0.3):
+                        pass
+                except TimeoutError:
+                    pass
+                self.assertTrue(lock.exists())
+            self.assertTrue(lock.exists())
+
+    def test_lock_released_on_close(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "Courses"
+            with mod.workspace_lock(root, timeout_seconds=5):
+                pass
+            with mod.workspace_lock(root, timeout_seconds=2):
+                pass
+
+    def test_every_mutator_declares_lock(self):
+        # The lock table is a code-level declaration: every mutating course
+        # operation takes the workspace lock; pure readers do not.
+        table = mod.LOCK_TABLE
+        for op, info in table.items():
+            self.assertIn("mutates", info)
+            self.assertIn("locks", info)
+            self.assertEqual(info["locks"], info["mutates"],
+                             f"lock policy violated for {op}")
+        for must_lock in ("course init", "course create", "record",
+                          "course dashboard", "migrate"):
+            self.assertTrue(table[must_lock]["locks"], must_lock)
+        for reader in ("course resolve", "course list", "report"):
+            self.assertFalse(table[reader]["locks"], reader)
+
+
+class TestStandingApproval(unittest.TestCase):
+    def test_init_without_approve_refuses(self):
+        # The CLI gate (commit 9) requires --approve; the record helper
+        # refuses unknown scope tokens so no grant can smuggle permissions.
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(ValueError):
+                mod.write_approval(Path(d) / "Courses", scope=["publish-to-remote"])
+
+    def test_revoked_approval_blocks_mutations(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "Courses"
+            mod.write_approval(root)
+            self.assertTrue(mod.approval_allows(mod.read_approval(root), "course-create"))
+            mod.revoke_approval(root)
+            self.assertFalse(mod.approval_allows(mod.read_approval(root), "course-create"))
+
+    def test_deleted_approval_requires_reprompt(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "Courses"
+            mod.write_approval(root)
+            (root / ".learnprint" / "approval.json").unlink()
+            self.assertIsNone(mod.read_approval(root))
+            self.assertFalse(mod.approval_allows(mod.read_approval(root), "course-create"))
+
+    def test_denial_falls_back_to_prompt_only(self):
+        # No grant file, no --approve path: approval_allows(None) is False,
+        # so mutating commands must refuse and the agent stays prompt-only.
+        self.assertFalse(mod.approval_allows(None, "course-create"))
+
+    def test_grant_excludes_publish_and_global_install(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "Courses"
+            rec = mod.write_approval(root)
+            for forbidden in ("publish", "global-install", "delete-evidence",
+                              "outside-writes", "destructive-git", "network"):
+                self.assertNotIn(forbidden, rec["scope"])
+                self.assertFalse(mod.approval_allows(rec, forbidden))
+
+    def test_approval_scope_rejects_unknown_tokens(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "Courses"
+            (root / ".learnprint").mkdir(parents=True)
+            (root / ".learnprint" / "approval.json").write_text(
+                '{"schema_version": "1.0", "scope": ["course-create", "sudo"], '
+                '"revoked": false, "granted_at": "t", "granted_by": "x", "revoked_at": null}',
+                encoding="utf-8")
+            self.assertIsNone(mod.read_approval(root))
+
+
 if __name__ == "__main__":
     unittest.main()
