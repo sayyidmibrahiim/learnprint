@@ -1482,6 +1482,7 @@ def cmd_course_validate(a):
         return 2
     if a.repair:
         _require(a, root, "state-update")
+        fixed_notes = []
         with workspace_lock(root):
             registry = registry_read(root)
             known = {c.get("rel_path") for c in registry.get("courses", [])}
@@ -1494,12 +1495,17 @@ def cmd_course_validate(a):
                         orphan_state = json.loads(sp.read_text(encoding="utf-8"))
                     except (ValueError, OSError):
                         orphan_state = None
-                    orphan_id = (orphan_state.get("course_id")
-                                 if isinstance(orphan_state, dict) else None)
+                    if not isinstance(orphan_state, dict):
+                        fixed_notes.append(
+                            f"orphan directory with unreadable state.json: {rel} "
+                            "MANUAL INTERVENTION REQUIRED")
+                        known.add(rel)
+                        continue
+                    orphan_id = orphan_state.get("course_id")
                     if isinstance(orphan_id, str) and routing.is_course_id(orphan_id):
                         if any(c.get("course_id") == orphan_id
                                for c in registry.get("courses", [])):
-                            problems.append(
+                            fixed_notes.append(
                                 f"orphan directory identity already registered: {rel} "
                                 "MANUAL INTERVENTION REQUIRED")
                             known.add(rel)
@@ -1515,12 +1521,32 @@ def cmd_course_validate(a):
                              "last_activity": None, "classification_source": "imported",
                              "goal": "", "topic_id": None}
                     registry.setdefault("courses", []).append(entry)
-                    problems.append(f"adopted orphan directory: {rel}")
+                    # Stamp the adopted identity into the orphan state BEFORE
+                    # the registry commit advertises it (same ordering as
+                    # course_create); failure here refuses, never half-adopts.
+                    orphan_state["course_id"] = new_id
+                    orphan_state.setdefault("schema_version", "1.0")
+                    orphan_state.setdefault("goal", "")
+                    orphan_state.setdefault("learning_scope", [])
+                    orphan_state.setdefault("sources", [])
+                    atomic_write(sp, json.dumps(orphan_state, ensure_ascii=False, indent=2) + "\n")
+                    fixed_notes.append(f"adopted orphan directory: {rel}")
                     known.add(rel)
             for tmp in (root / ".learnprint").glob("*.tmp"):
                 tmp.unlink()
-                problems.append(f"removed stale temp file: {tmp.name}")
+                fixed_notes.append(f"removed stale temp file: {tmp.name}")
             registry_write(root, registry)
+            # Re-audit: a repair that leaves real damage must NOT report
+            # SUCCESS. Orphans/tmp adopted above no longer appear; anything
+            # remaining (ledger damage, mismatches, duplicates) is INVALID.
+            registry = registry_read(root)
+            remaining = collect_workspace_problems(root, registry)
+            manual = [n for n in fixed_notes if "MANUAL INTERVENTION REQUIRED" in n]
+            if remaining or manual:
+                print("INVALID\n" + "\n".join(manual + remaining))
+                return 2
+            print("REPAIRED\n" + "\n".join(fixed_notes) if fixed_notes else "VALID")
+            return 0
     print("VALID" if not problems else "REPAIRED\n" + "\n".join(problems))
     return 0
 

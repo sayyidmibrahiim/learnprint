@@ -228,5 +228,126 @@ class TestB3LedgerTerminatorSafety(unittest.TestCase):
             self.assertEqual([r["event_id"] for r in recs], ["e0", "e1"])
 
 
+class TestB4RepairTransactions(unittest.TestCase):
+    def _ledger(self, root):
+        return root / ".learnprint" / "events.jsonl"
+
+    def _backups(self, root):
+        return sorted((root / ".learnprint").glob("events.jsonl.bak.*"))
+
+    def test_repair_idempotent(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(d)
+            lp = self._ledger(root)
+            mod.append_event_line(lp, json.dumps(valid_event("e1")))
+            with open(lp, "ab") as fh:
+                fh.write(b'{"broken": tru')
+            first = mod.ledger_repair_truncate_partial_tail(lp)
+            self.assertEqual(first["status"], "ok")
+            second = mod.ledger_repair_truncate_partial_tail(lp)
+            self.assertEqual(second["status"], "ok")
+            self.assertEqual(second["records"], 1)
+            self.assertEqual(len(self._backups(root)), 1)
+
+    def test_repair_backup_hash_chain(self):
+        import tempfile, hashlib
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(d)
+            lp = self._ledger(root)
+            mod.append_event_line(lp, json.dumps(valid_event("e1")))
+            with open(lp, "ab") as fh:
+                fh.write(b'{"broken": tru')
+            pre_sha = mod.ledger_diagnose(lp)["sha256"]
+            mod.ledger_repair_truncate_partial_tail(lp)
+            backups = self._backups(root)
+            self.assertEqual(len(backups), 1)
+            self.assertEqual(hashlib.sha256(backups[0].read_bytes()).hexdigest(), pre_sha)
+            audit = (root / ".learnprint" / "recovery-log.jsonl").read_text(encoding="utf-8")
+            entry = json.loads(audit.strip().splitlines()[-1])
+            self.assertEqual(entry["original_sha256"], pre_sha)
+            self.assertEqual(entry["backup_sha256"], pre_sha)
+            self.assertEqual(entry["repaired_sha256"], mod.ledger_diagnose(lp)["sha256"])
+
+    def test_successive_repairs_keep_distinct_backups(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(d)
+            lp = self._ledger(root)
+            mod.append_event_line(lp, json.dumps(valid_event("e1")))
+            with open(lp, "ab") as fh:
+                fh.write(b'{"broken": tru')
+            mod.ledger_repair_truncate_partial_tail(lp)
+            mod.append_event_line(lp, json.dumps(valid_event("e2")))
+            with open(lp, "ab") as fh:
+                fh.write(b'{"broken": xx')
+            mod.ledger_repair_truncate_partial_tail(lp)
+            backups = self._backups(root)
+            self.assertEqual(len(backups), 2)
+            self.assertNotEqual(backups[0].name, backups[1].name)
+            recs = mod.ledger_read_trusted(lp, workspace_root=root)
+            self.assertEqual([r["event_id"] for r in recs], ["e1", "e2"])
+
+    def test_repair_refuses_midfile_corruption(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(d)
+            lp = self._ledger(root)
+            mod.append_event_line(lp, json.dumps(valid_event("e1")))
+            mod.append_event_line(lp, json.dumps(valid_event("e2")))
+            lines = lp.read_bytes().split(b"\n")
+            lines[0] = b"{mid-file garbage"
+            before = b"\n".join(lines)
+            lp.write_bytes(before)
+            with self.assertRaises(mod.LedgerDamage):
+                mod.ledger_repair_truncate_partial_tail(lp)
+            self.assertEqual(lp.read_bytes(), before)
+
+
+class TestB5ValidateHonesty(unittest.TestCase):
+    def test_repair_does_not_claim_success_with_damaged_ledger(self):
+        import tempfile, io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(d)
+            lp = root / ".learnprint" / "events.jsonl"
+            mod.append_event_line(lp, json.dumps(valid_event("e1")))
+            mod.append_event_line(lp, json.dumps(valid_event("e2")))
+            lines = lp.read_bytes().split(b"\n")
+            lines[0] = b"{mid-file garbage"
+            lp.write_bytes(b"\n".join(lines))
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                rc = mod.cmd_course_validate(
+                    _ns(repair=True, approve=True, courses_root=str(root)))
+            out = buf.getvalue()
+            self.assertEqual(rc, 2)
+            self.assertIn("INVALID", out)
+            self.assertNotIn("REPAIRED", out)
+
+    def test_repair_adopts_orphan_then_valid(self):
+        import tempfile, io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(d)
+            orphan = root / "life/imported/orphan-topic"
+            orphan.mkdir(parents=True)
+            (orphan / "state.json").write_text(json.dumps(
+                {"schema_version": "1.0", "course_id": None, "goal": "g",
+                 "learning_scope": [], "sources": []}), encoding="utf-8")
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                rc = mod.cmd_course_validate(
+                    _ns(repair=True, approve=True, courses_root=str(root)))
+            self.assertEqual(rc, 0)
+            self.assertIn("REPAIRED", buf.getvalue())
+            buf2 = io.StringIO()
+            with redirect_stdout(buf2):
+                rc2 = mod.cmd_course_validate(
+                    _ns(repair=False, approve=False, courses_root=str(root)))
+            self.assertEqual(rc2, 0)
+            self.assertIn("VALID", buf2.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
