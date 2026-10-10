@@ -1,4 +1,4 @@
-# Implementation Plan: Learnprint Repository Hardening & Automatic Course Workspace (Rev 2)
+# Implementation Plan: Learnprint Repository Hardening & Automatic Course Workspace (Rev 2a)
 
 ## Objective
 
@@ -18,24 +18,18 @@ Transform Learnprint into a portable adaptive-learning workspace: user opens rep
 
 ## Context
 
-### Repository Baseline (verified 2026-10-10)
+### Repository Baseline (verified 2026-10-10, updated Rev 2a)
 
-- Branch: `main`, remote commit `c4a433b`, clean working tree
+- Branch: `main`, commit `7c16f1b` (synced: local HEAD = origin/main)
 - Remote: `https://github.com/sayyidmibrahiim/learnprint.git` (public)
-- Local HEAD: `eb6065a` (plan commit, 1 commit ahead of origin/main)
+- History: `c4a433b` (initial) → `eb6065a` (plan Rev 1) → `7c16f1b` (plan Rev 2)
 - Language: Python 3.9+ stdlib-only
 - Tests: 16/16 pass, packaging checks pass, founder profile validates
 
-### Git Governance (Correction #1)
+### Git Governance
 
-**Status:** Local main is at `eb6065a` (1 ahead of origin `c4a433b`). The plan commit `eb6065a` exists locally but has NOT been pushed. The plan file exists at `plan/learnprint-hardening-workspace.md` locally.
-
-**Action required:** No reset, push, or modification without explicit approval. The implementation branch `feature/hardening-workspace` will be created from `c4a433b` (origin/main), NOT from `eb6065a`. The local plan commit can be handled per user decision:
-- Option A: Reset local main to `c4a433b`, create branch from there.
-- Option B: Push plan to origin, then branch from there.
-- Option C: Leave as-is, branch from `origin/main`.
-
-Awaiting approval on preferred option.
+Both plan commits are on remote main. No pending local-vs-remote divergence.
+Implementation branch `feature/hardening-workspace` will be created from `7c16f1b` after explicit approval.
 
 ### Jev Decision
 
@@ -96,50 +90,94 @@ Expected: 'needs_review'
 
 ## Implementation Steps
 
-### Stage 1: P1-A — Competency State Machine (Correction #2)
+### Stage 1: P1-A — Competency State Machine
 
-#### Step 1.1: Define Complete State Transition Table
+#### Step 1.1: Evidence evaluation model
 
-The current code has implicit state logic spread across `progress()` without clear transitions. Define explicit states, transitions, and latest-evidence rules.
+The current `progress()` uses cumulative `any()` checks (a historical pass persists forever). The Rev 2 pseudocode inherited this flaw. Replace with a **demonstration-cycle** model where the latest relevant evidence of each type governs state.
 
-**Competency states** (from `topic-state.schema.json` + `REVIEW.md`):
+**Core concept — demonstration cycle:**
+A demonstration cycle is the set of evidence establishing that a learner currently holds a competency. It requires:
+1. A passing `independent_application` event (latest app event passes).
+2. A passing `novel_transfer` event occurring AFTER the latest app pass (or at the same time).
+3. Optionally, a passing `delayed_retrieval` event occurring AFTER both (1) and (2).
+
+A cycle is **broken** when any new event contradicts it. The learner must re-establish from the broken point.
+
+**Filter rules (unchanged from current code):**
+- Only events where `help_level == "none"`, `grader == "human_reviewed"`, `evidence_origin == "observed_response"`, and `is_synthetic_example` is falsy count as independent evidence.
+- Events are sorted by `(date, event_id)` for deterministic chronological ordering.
+- All timestamps must include timezone info (existing validation enforces this).
+
+**State determination algorithm (replaces cumulative `any()`):**
+
 ```
-unknown → emerging → demonstrated → maintained
-                                   ↘ needs_review ↙
-                        retention_due (time-based)
+Given: chronologically sorted independent events for one competency
+
+1. Walk events newest-to-oldest. Find:
+   - latest_app:      most recent independent_application event
+   - latest_transfer:  most recent novel_transfer event
+   - latest_delayed:   most recent delayed_retrieval event
+
+2. Determine demonstration status:
+   app_ok      = latest_app exists AND latest_app.rubric.application == 2
+   transfer_ok = latest_transfer exists AND latest_transfer.rubric.transfer == 2
+                 AND latest_transfer.date >= latest_app.date (if latest_app exists)
+   demonstrated = app_ok AND transfer_ok
+
+3. If not demonstrated → status = "emerging" (or "unknown" if no events at all)
+
+4. If demonstrated, evaluate delayed retrieval:
+   a. If no delayed events exist → status = "demonstrated"
+   b. If latest_delayed.date < max(latest_app.date, latest_transfer.date):
+      → delayed evidence predates current demonstration cycle; ignore it
+      → status = "demonstrated"
+   c. If latest_delayed passes (concept==2 AND application==2):
+      → status = "maintained"
+   d. If latest_delayed fails:
+      → status = "needs_review"
+
+5. Time-based override (applied last):
+   If status in {"demonstrated", "maintained"} AND due_at is set AND due_at <= now:
+      → status = "retention_due"
 ```
 
-**State transition rules (latest relevant evidence governs):**
+**Why this fixes the contradictions:**
 
-| Current state | Event type | Latest evidence result | New state |
-|--------------|------------|----------------------|-----------|
-| unknown | Any assessed event | Any | emerging |
-| emerging | independent_application pass + novel_transfer pass | Both rubric ≥2 | demonstrated |
-| demonstrated | delayed_retrieval pass (latest) | rubric concept=2, application=2 | maintained |
-| demonstrated | due_at passed (no new evidence) | N/A | retention_due |
-| maintained | delayed_retrieval FAIL (latest) | rubric concept≠2 OR application≠2 | needs_review |
-| maintained | due_at passed (no new evidence) | N/A | retention_due |
-| needs_review | independent_application pass + novel_transfer pass | Both rubric ≥2 | demonstrated |
-| needs_review | delayed_retrieval pass (latest) | rubric concept=2, application=2 | demonstrated (not maintained — needs fresh cycle) |
-| retention_due | delayed_retrieval pass (latest) | rubric concept=2, application=2 | maintained |
-| retention_due | delayed_retrieval FAIL (latest) | rubric concept≠2 OR application≠2 | needs_review |
-| retention_due | independent_application pass + novel_transfer pass | Both rubric ≥2 | demonstrated |
-| Any | independent_application FAIL (latest app event) | rubric application≠2 | emerging |
-| Any | assisted attempt (help_level ≠ none) | N/A | No state change (not counted as independent evidence) |
+| Rev 2 contradiction | How this fixes it |
+|---------------------|-------------------|
+| `any()` app/transfer: old pass masks later failure | Uses `latest_app` / `latest_transfer` — only the most recent of each type counts |
+| Delayed fail persists after app+transfer remediation | Step 4b: delayed evidence older than current cycle is ignored |
+| Transfer failure not evaluated | `transfer_ok` checks latest transfer independently |
+| Delayed pass after needs_review → `maintained` prematurely | Step 4: delayed must postdate current app+transfer cycle; if learner re-did app+transfer but no new delayed, status = "demonstrated" |
 
-**Chronological tie-breaking:** When multiple events share the same timestamp, sort secondarily by event_id (lexicographic). This is deterministic and reproducible.
+**State transition table (derived from algorithm, for reference):**
 
-**Recovery after remediation:** A learner who was `needs_review` must re-demonstrate via application+transfer before returning to `demonstrated`. A single successful delayed_retrieval after `needs_review` returns to `demonstrated` (not `maintained`), because the remediation cycle must be fresh.
+| Scenario (chronological) | latest_app | latest_transfer | latest_delayed | Status |
+|--------------------------|-----------|----------------|---------------|--------|
+| No events | — | — | — | unknown |
+| app_fail only | fail | — | — | emerging |
+| app_pass only | pass | — | — | emerging |
+| app_pass + transfer_pass | pass | pass | — | demonstrated |
+| app_pass + transfer_fail | pass | fail | — | emerging |
+| app_pass + transfer_pass + delayed_pass | pass | pass | pass (after cycle) | maintained |
+| app_pass + transfer_pass + delayed_fail | pass | pass | fail (after cycle) | needs_review |
+| app_pass + transfer_pass + delayed_pass + delayed_fail | pass | pass | fail (latest) | needs_review |
+| ...delayed_fail + new_app_pass + new_transfer_pass | pass(new) | pass(new) | fail (before cycle) | demonstrated |
+| ...delayed_fail + new_app_pass + new_transfer_pass + new_delayed_pass | pass(new) | pass(new) | pass (after new cycle) | maintained |
+| demonstrated/maintained + due_at in past | pass | pass | any | retention_due |
+| retention_due + delayed_pass | pass | pass | pass (after cycle) | maintained |
+| retention_due + delayed_fail | pass | pass | fail (after cycle) | needs_review |
 
-**Consistency with `reviews_from_events()`:**
-- Both functions must use the same `failed_latest` check.
-- `progress()` determines CURRENT state.
-- `reviews_from_events()` determines NEXT review schedule.
-- Both must agree on what "latest" means (chronologically latest event per competency, with tie-breaking).
+**Assisted attempts:** `help_level != "none"` → filtered out entirely. No state change.
+
+**AI-only grades:** `grader != "human_reviewed"` → filtered out entirely. No state change.
+
+**Timezone handling:** Events without timezone info are rejected by `validate_event()`. All comparisons use timezone-aware datetimes. The sort key `(date, event_id)` uses ISO 8601 string comparison which preserves chronological order for timezone-aware timestamps in the same format.
 
 #### Step 1.2: Implement revised `progress()` function
 
-Replace lines 128-161 with the complete state machine. Pseudocode:
+Replace lines 128-161. Pseudocode:
 
 ```python
 def progress(topic, events, now=None):
@@ -161,48 +199,50 @@ def progress(topic, events, now=None):
 
         if not ev:
             status = "unknown"
+            app_ok = transfer_ok = delayed_pass_flag = False
         else:
-            # Check application and transfer from ANY independent event (cumulative gates)
-            has_application = any(
-                x["task_type"] == "independent_application"
-                and x["rubric"].get("application") == 2
-                for x in independent
-            )
-            has_transfer = any(
-                x["task_type"] == "novel_transfer"
-                and x["rubric"].get("transfer") == 2
-                for x in independent
-            )
+            # Find latest event of each type
+            latest_app = None
+            latest_transfer = None
+            latest_delayed = None
+            for x in reversed(independent):
+                if x["task_type"] == "independent_application" and latest_app is None:
+                    latest_app = x
+                elif x["task_type"] == "novel_transfer" and latest_transfer is None:
+                    latest_transfer = x
+                elif x["task_type"] == "delayed_retrieval" and latest_delayed is None:
+                    latest_delayed = x
+                if latest_app and latest_transfer and latest_delayed:
+                    break
 
-            # Check latest delayed retrieval (if any exist)
-            all_delayed = [x for x in independent
-                          if x["task_type"] == "delayed_retrieval"]
-            latest_delayed = all_delayed[-1] if all_delayed else None
-            delayed_pass = (latest_delayed is not None
-                           and latest_delayed["rubric"].get("concept") == 2
-                           and latest_delayed["rubric"].get("application") == 2)
-            delayed_fail = (latest_delayed is not None and not delayed_pass)
+            # Evaluate current demonstration cycle
+            app_ok = (latest_app is not None
+                      and latest_app["rubric"].get("application") == 2)
+            transfer_ok = (latest_transfer is not None
+                           and latest_transfer["rubric"].get("transfer") == 2
+                           and (latest_app is None
+                                or latest_transfer["date"] >= latest_app["date"]))
+            demonstrated = app_ok and transfer_ok
 
-            # Check latest application event (for regression detection)
-            all_app = [x for x in independent
-                      if x["task_type"] == "independent_application"]
-            latest_app = all_app[-1] if all_app else None
-            app_regressed = (latest_app is not None
-                            and latest_app["rubric"].get("application") != 2)
-
-            # Determine state
-            if app_regressed:
+            if not demonstrated:
                 status = "emerging"
-            elif delayed_fail:
-                status = "needs_review"
-            elif delayed_pass and has_application and has_transfer:
-                status = "maintained"
-            elif has_application and has_transfer:
-                status = "demonstrated"
+                delayed_pass_flag = False
             else:
-                status = "emerging"
+                # Evaluate delayed retrieval relative to current cycle
+                cycle_start = max(latest_app["date"], latest_transfer["date"])
+                if latest_delayed is None or latest_delayed["date"] < cycle_start:
+                    # No delayed evidence in current cycle
+                    status = "demonstrated"
+                    delayed_pass_flag = False
+                elif (latest_delayed["rubric"].get("concept") == 2
+                      and latest_delayed["rubric"].get("application") == 2):
+                    status = "maintained"
+                    delayed_pass_flag = True
+                else:
+                    status = "needs_review"
+                    delayed_pass_flag = False
 
-        # Time-based retention_due check
+        # Time-based retention_due (applied last)
         due = c.get("due_at")
         if status in {"demonstrated", "maintained"} and due:
             try:
@@ -215,9 +255,9 @@ def progress(topic, events, now=None):
         results.append({
             "id": c["id"], "name": c["name"], "status": status,
             "observations": len(ev),
-            "independent_pass_application": has_application if ev else False,
-            "independent_pass_transfer": has_transfer if ev else False,
-            "delayed_pass": delayed_pass if ev else False,
+            "independent_pass_application": app_ok,
+            "independent_pass_transfer": transfer_ok,
+            "delayed_pass": delayed_pass_flag,
         })
 
     denominator = len(results)
@@ -234,42 +274,68 @@ def progress(topic, events, now=None):
     }
 ```
 
-#### Step 1.3: Align `reviews_from_events()` with same latest-evidence logic
+#### Step 1.3: Align `reviews_from_events()` with same cycle model
 
-Currently `reviews_from_events()` uses `max(relevant, key=lambda x: x["date"])` for latest event. Update to use the same `(date, event_id)` sort key for tie-breaking consistency.
+- Use the same `(date, event_id)` sort key for tie-breaking.
+- Determine `failed_latest` using the same cycle-scoped logic: latest delayed within current cycle.
+- If delayed is before current cycle, treat as no delayed evidence (schedule first retrieval).
 
-#### Step 1.4: Comprehensive regression tests
+#### Step 1.4: Regression tests with failing scenarios
 
 New file: `tests/test_progress_regression.py`
 
-| Test case | Scenario | Expected |
-|-----------|----------|----------|
-| `test_failed_delayed_downgrades_maintained` | pass → pass → delayed_pass → delayed_FAIL | `needs_review` |
-| `test_successful_latest_delayed_maintains` | pass → pass → delayed_pass | `maintained` |
-| `test_interleaved_pass_fail_uses_latest` | delayed_pass → delayed_fail → delayed_pass | `maintained` |
-| `test_app_regression_to_emerging` | app_pass → transfer_pass → app_FAIL | `emerging` |
-| `test_transfer_failure_stays_emerging` | app_pass → transfer_FAIL | `emerging` |
-| `test_recovery_after_needs_review` | needs_review state → app_pass + transfer_pass | `demonstrated` (not `maintained`) |
-| `test_delayed_pass_after_needs_review` | needs_review → delayed_pass + app + transfer | `demonstrated` (fresh cycle) |
-| `test_retention_due_on_stale_demonstrated` | demonstrated + due_at in past | `retention_due` |
-| `test_retention_due_delayed_fail` | retention_due → delayed_FAIL | `needs_review` |
-| `test_retention_due_delayed_pass` | retention_due → delayed_pass | `maintained` |
-| `test_assisted_attempt_no_state_change` | help_level=hint → status unchanged | Same as before |
-| `test_ai_graded_not_counted` | grader=ai_reviewed | Not counted in independent |
-| `test_chronological_tiebreak` | Same timestamp, different event_ids | Deterministic order |
-| `test_progress_reviews_consistency` | Same events → progress() and reviews_from_events() agree on latest | Consistent |
-| `test_empty_events_unknown` | No events | `unknown` |
-| `test_existing_tests_still_pass` | All 16 original tests | PASS |
+Each test constructs explicit events with exact timestamps and event_ids.
 
-### Stage 2: P1-B — Profile-First Personalization (Correction #3)
+| Test case | Events (chronological) | Expected status | Tests which fix |
+|-----------|----------------------|-----------------|-----------------|
+| `test_p1a_original_bug` | app✓ → transfer✓ → delayed✓ → delayed✗ | `needs_review` | Original P1-A bug |
+| `test_latest_delayed_pass` | app✓ → transfer✓ → delayed✓ | `maintained` | Baseline correct case |
+| `test_interleaved_delayed` | delayed✓ → delayed✗ → delayed✓ | `maintained` (latest passes) | Latest-wins |
+| `test_app_regression` | app✓ → transfer✓ → app✗(latest) | `emerging` | App regression |
+| `test_transfer_regression` | app✓ → transfer✓ → transfer✗(latest) | `emerging` | Transfer regression (Rev 2 gap) |
+| `test_remediation_clears_old_delayed_fail` | app✓ → transfer✓ → delayed✗ → app✓(new) → transfer✓(new) | `demonstrated` | Cycle reset (Rev 2 contradiction) |
+| `test_remediation_then_new_delayed_pass` | ...→ delayed✗ → app✓ → transfer✓ → delayed✓ | `maintained` | Full recovery |
+| `test_delayed_pass_after_remediation_not_premature` | app✓ → transfer✓ → delayed✗ → delayed✓(no new app/transfer) | `needs_review` | delayed✓ older than the failure doesn't help; but actually latest_delayed is the pass. Clarification: if delayed✗ then delayed✓ with NO new app/transfer, the latest delayed passes. Status = `maintained` because app+transfer cycle is still intact (no app/transfer regression). This is correct — the learner demonstrated app+transfer, failed delayed, then passed delayed again. |
+| `test_delayed_before_cycle_ignored` | delayed✓(old) → app✓ → transfer✓ | `demonstrated` | Old delayed predates cycle |
+| `test_retention_due_stale` | app✓ → transfer✓, due_at in past | `retention_due` | Time-based |
+| `test_retention_due_then_delayed_fail` | (retention_due state) + delayed✗ | `needs_review` | retention_due + failure |
+| `test_retention_due_then_delayed_pass` | (retention_due state) + delayed✓ | `maintained` | retention_due + success |
+| `test_assisted_attempt_ignored` | app✓(help=hint) only | `unknown` or `emerging` (only non-independent events) | Filter correctness |
+| `test_ai_graded_ignored` | app✓(grader=ai_reviewed) | Not counted | Filter correctness |
+| `test_tiebreak_deterministic` | Two events same timestamp, different event_ids | Deterministic order | Tie-breaking |
+| `test_progress_reviews_agree_on_latest` | Same events → both functions | Consistent | Cross-function consistency |
+| `test_empty_events` | No events | `unknown` | Edge case |
+| `test_transfer_before_app` | transfer✓ → app✓ | `demonstrated` (transfer.date < app.date, but transfer_ok requires transfer.date >= app.date → `emerging`) | Order matters |
+| `test_existing_16_tests_pass` | Run existing test suite | All 16 pass | Backward compat |
 
-#### Step 2.1: Define profile precedence chain
+**Clarification on `test_delayed_pass_after_remediation_not_premature`:** Rev 2 claimed a delayed pass after needs_review should return `demonstrated` not `maintained`. This was wrong. If the latest app+transfer still pass (no regression), and the latest delayed (which is the new pass) is within that cycle, status = `maintained`. The cycle-based model handles this correctly without a special case.
 
-The canonical personalization mechanism is reading `profile.json` directly, NOT installing a generated personal skill. Priority order:
+### Stage 2: P1-B — Profile-First Personalization
 
-1. `Courses/.learnprint/learner/profile.json` (new workspace, if exists and validated)
-2. `<legacy-workspace>/learner/profile.json` (old `my-learning/` format, via `--workspace`)
-3. `profiles/founder-default.json` (public fallback)
+#### Step 2.1: Define profile precedence chain with validation
+
+The canonical personalization mechanism is reading `profile.json` directly, NOT installing a generated personal skill. Priority order with validation gates:
+
+1. `Courses/.learnprint/learner/profile.json` — IF exists, validates against schema, AND `assessment_status` is `"assessed"` or `"provisional"`.
+2. `<legacy-workspace>/learner/profile.json` (old `my-learning/` format, via `--workspace`) — same validation gates.
+3. `profiles/founder-default.json` (public fallback) — always valid, `public_template: true`.
+
+**Critical rule: An `unassessed` local profile does NOT override the founder fallback for teaching preferences.** An unassessed profile exists to record that a learner is present but hasn't been assessed. The teaching protocol should use the founder defaults for instruction style while noting that the learner is not yet assessed. The unassessed profile's `preferences` field is empty by design (`learner-profile-starter.json` has `"preferences": {}`).
+
+Concretely, the `learnprint-learn` skill resolves the effective profile:
+```
+1. Read local profile (Courses/.learnprint/learner/profile.json)
+2. Validate against schema
+3. If valid AND assessment_status in {"assessed", "provisional"}:
+   → Use local profile for all teaching preferences
+4. If valid AND assessment_status == "unassessed":
+   → Use founder-default.json for teaching preferences
+   → Note in HANDOFF.md: "Learner not yet assessed. Using founder defaults."
+   → Recommend running learnprint-assess
+5. If missing or invalid:
+   → Use founder-default.json
+   → Note the reason
+```
 
 The `learnprint-learn` skill SKILL.md must instruct the agent to read profile from these paths in order. This is file-reading, not skill discovery — works on ALL hosts regardless of skill discovery mechanism.
 
@@ -291,117 +357,93 @@ For users who WANT the personal skill discoverable by their host:
 
 | Test case | Expected |
 |-----------|----------|
-| `test_profile_precedence_local_over_founder` | Local profile loaded when present |
-| `test_profile_precedence_founder_fallback` | Founder used when no local profile |
+| `test_profile_precedence_assessed_over_founder` | Assessed local profile used for preferences |
+| `test_profile_precedence_provisional_over_founder` | Provisional local profile used for preferences |
+| `test_profile_precedence_unassessed_uses_founder_prefs` | Unassessed local profile → founder defaults for teaching preferences |
+| `test_profile_precedence_missing_uses_founder` | No local profile → founder fallback |
+| `test_profile_precedence_invalid_uses_founder` | Invalid local profile → founder fallback with error noted |
 | `test_install_personal_to_gitignored_path` | Copies to gitignored path |
 | `test_install_personal_refuses_non_gitignored` | Refuses if dest not gitignored in public repo |
 | `test_install_personal_refuses_overwrite` | Refuses existing personal skill |
 | `test_install_personal_requires_approval` | Requires --approve |
 | `test_generated_skill_no_raw_evidence` | SKILL.md contains no learner answers |
 
-### Stage 3: Deterministic Course Routing (Correction #4)
+### Stage 3: Course Routing and Workspace CLI
 
-#### Step 3.1: Separate concerns
+#### Step 3.0: First-run UX
 
-Two distinct operations, NOT conflated:
+When the user first says "Belajar: in/on/at" and `Courses/` does not exist:
 
-**A) Deterministic path resolution** (`scripts/course_router.py`):
-- Registry lookup by course_id, alias, normalized title
-- Slug generation from title
-- Path validation (security)
-- Course creation (atomic)
-- Dashboard generation
+1. Agent detects no `Courses/.learnprint/registry.json`.
+2. Agent asks ONE scoped approval question:
+   > "Learnprint will create a `Courses/` workspace in this repository for your learning data. This workspace is private (gitignored) and limited to non-destructive learning operations: creating courses, recording evidence, updating progress. It will NOT publish data, delete existing files, install global software, or modify files outside `Courses/`. Approve? [y/n]"
+3. On approval: run `python scripts/learnprint.py course init --approve`.
+4. This creates `Courses/.learnprint/` with empty registry, starter profile, empty events.jsonl, and reviews.json.
+5. Then proceed to resolve/create the requested course.
+6. Subsequent course creations within `Courses/` do NOT re-prompt — the standing approval covers ordinary non-destructive writes inside the approved workspace.
 
-**B) Semantic classification** (LLM responsibility, guided by `rules/COURSE-ROUTING.md`):
-- Determining whether "in/on/at" is a Language topic
-- Deciding if a request is a new course vs. module of existing
-- Resolving genuinely ambiguous placement
-- NEVER stored as verified truth — stored as `classification_source: "agent"` in registry
+**Standing approval scope (defined in `rules/WORKSPACE.md`):**
+- ✓ Create course directories and artifacts inside `Courses/`
+- ✓ Append events to `events.jsonl`
+- ✓ Update `registry.json`, `reviews.json`, `state.json`, `HANDOFF.md`, `INDEX.md`
+- ✓ Copy profile from assessment to `Courses/.learnprint/learner/`
+- ✗ Publish to GitHub or any remote
+- ✗ Delete existing course directories or evidence
+- ✗ Install global skills or modify `~/.config/`, `~/.claude/`, etc.
+- ✗ Write outside `Courses/` (except updating HANDOFF.md at repo root if it exists)
+- ✗ Run destructive git operations
 
-#### Step 3.2: Entity definitions
+This approval model respects host-level tool permissions. If the host disallows filesystem writes, the skill provides a prompt-only fallback (Tier 0).
 
-**Category:** Top-level taxonomy node. Examples: Languages, Tech, Science, Mathematics, Business, Arts, Other. Extensible but conservative. Created by classification, not by the learner.
+#### Step 3.1: Single CLI — `learnprint.py` only
 
-**Course:** A bounded learning unit with its own `state.json`, syllabus, concept map, and evidence. Has a unique `course_id`, a `slug`, a `title`, a `category` path, and optional `aliases`. Example: `in-on-at` under `Languages/English/Grammar/`.
+Rev 2 proposed both `course_router.py` (standalone CLI) and `learnprint.py` (new subcommands). This creates a duplicate command surface. **Resolution: one CLI.**
 
-**Module:** A unit within a course's syllabus. Does NOT have its own directory — it is a section of `SYLLABUS.md` and tracked via competencies in `state.json`. Example: "Time prepositions" is a module within the "in/on/at" course.
+All course operations are subcommands of `scripts/learnprint.py`. The routing logic lives in an internal module `scripts/learnprint_routing.py` (imported by `learnprint.py`, not a standalone CLI).
 
-A broad topic like "English Grammar" creates a course at `Languages/English/Grammar/`. A narrow sub-topic like "in/on/at" creates a child course at `Languages/English/Grammar/in-on-at/`. They are distinct courses, not parent-child in a database sense — they share a filesystem path prefix.
-
-#### Step 3.3: `scripts/course_router.py` — Core functions
-
-```python
-# --- Deterministic (no LLM needed) ---
-
-def slugify(title: str) -> str:
-    """Unicode-aware, cross-platform safe slug.
-    Rules:
-    - Lowercase, strip diacritics where safe
-    - Replace / with - (so "in/on/at" → "in-on-at")
-    - Replace spaces and special chars with -
-    - Collapse multiple hyphens
-    - Reject: empty result, Windows reserved names (CON, PRN, NUL, AUX, COM1-9, LPT1-9),
-      path traversal (..), absolute paths, strings > 100 chars
-    - Case-insensitive collision check against existing registry
-    """
-
-def validate_path(path: str, courses_root: str) -> tuple[bool, str]:
-    """Cross-platform path validation.
-    Checks:
-    - Resolves symlinks/junctions, rejects if resolved path escapes courses_root
-    - Rejects Windows reserved names at any path component
-    - Case-insensitive collision detection (check existing dirs)
-    - Rejects path traversal (../)
-    - Rejects absolute paths
-    - Maximum depth: 6 levels below courses_root
-    - Maximum component length: 100 chars
-    Returns: (valid, error_message)
-    """
-
-def resolve_course(query: str, registry: dict) -> ResolveResult:
-    """Deterministic resolution. Returns one of:
-    - found: exact match by course_id, alias, or normalized title
-    - ambiguous: multiple plausible matches → list them for user
-    - not_found: no match → needs classification (LLM step)
-    Resolution order:
-    1. Exact course_id match
-    2. Exact alias match (case-insensitive)
-    3. Normalized title match (strip punctuation, lowercase, compare)
-    4. not_found
-    Does NOT attempt fuzzy matching or semantic similarity.
-    """
-
-def create_course(courses_root, category_path, slug, title, goal,
-                  registry, *, approve=False) -> CourseResult:
-    """Atomic course creation.
-    1. Validate path
-    2. Check registry for duplicate course_id or slug collision
-    3. Create directory + artifacts atomically (write to temp, rename)
-    4. Register in registry.json
-    Returns created path or error.
-    Artifacts created: README.md, state.json, SYLLABUS.md, MAP.mmd, HANDOFF.md
-    """
-
-# --- LLM-assisted (results tagged as agent-classified) ---
-
-def classify_topic(topic: str, existing_categories: list[str]) -> ClassifyResult:
-    """NOT called by the script — this is the interface the LLM uses.
-    The LLM fills in category_path and the script validates + creates.
-    Result stored in registry as classification_source: 'agent'
-    """
+```
+python scripts/learnprint.py course init     --approve
+python scripts/learnprint.py course resolve  --query "<topic>"
+python scripts/learnprint.py course create   --category <path> --slug <slug> --title <title> --goal <goal> --approve
+python scripts/learnprint.py course list
+python scripts/learnprint.py course dashboard
+python scripts/learnprint.py course resume
+python scripts/learnprint.py course validate
+python scripts/learnprint.py migrate         --from <old> --to <new> --approve [--dry-run]
 ```
 
-CLI interface:
-```bash
-python scripts/course_router.py resolve "in/on/at" --courses-root Courses/
-python scripts/course_router.py create --courses-root Courses/ \
-    --category "Languages/English/Grammar" --slug "in-on-at" \
-    --title "in/on/at" --goal "Use naturally in meetings" --approve
-python scripts/course_router.py list --courses-root Courses/
-python scripts/course_router.py dashboard --courses-root Courses/
-python scripts/course_router.py resume --courses-root Courses/
-python scripts/course_router.py validate-registry --courses-root Courses/
-```
+`--courses-root` defaults to `Courses/` (relative to repo root, auto-detected via git). Can be overridden but rarely needed.
+
+AGENTS.md instructs agents to call `python scripts/learnprint.py course resolve --query "<topic>"` — one tool, one entry point.
+
+#### Step 3.2: Separate concerns (routing module)
+
+`scripts/learnprint_routing.py` is a library, not a CLI. Contains:
+
+**Deterministic (no LLM needed):**
+- `slugify(title)` → safe slug
+- `validate_path(path, courses_root)` → (valid, error)
+- `resolve_course(query, registry)` → found/ambiguous/not_found
+- `create_course(...)` → CourseResult
+- `update_registry(...)` → None
+- `generate_dashboard(...)` → str
+
+**LLM-provided inputs (NOT functions in the module):**
+The LLM determines `category_path` for new courses and passes it to `create_course()`. The script validates the category_path. The registry stores `classification_source: "agent"` to mark this is not verified ground truth.
+
+#### Step 3.3: Entity definitions
+
+**Category:** Filesystem directory hierarchy. Examples: `Languages/English/Grammar/`, `Tech/DevOps/`. Not an enumerated type — any valid path is accepted if it passes `validate_path()`. Initial taxonomy guidance in `rules/COURSE-ROUTING.md` suggests top-level categories (Languages, Tech, Science, Mathematics, Business, Arts) but does NOT enforce them.
+
+**Course:** A bounded learning unit with its own directory containing `state.json`, `SYLLABUS.md`, `MAP.mmd`, `README.md`, `HANDOFF.md`. Has a unique `course_id` (equal to slug), a `title`, a `category_path`, and optional `aliases`. The `course_id` is stable even if the title changes.
+
+**Module:** A unit within a course's syllabus. Tracked as competencies in `state.json`. Does NOT have its own directory.
+
+**First-run taxonomy:** When `Courses/` is empty, the LLM classifies the first topic and creates the category path. No pre-populated empty categories. Categories emerge organically from actual courses. `rules/COURSE-ROUTING.md` provides guidance, not enforcement.
+
+**Aliases:** When creating a course, the LLM may provide alternative names. These are stored in `registry.aliases[]` and checked by `resolve_course()`. Example: course "in-on-at" with aliases `["prepositions in on at", "english in on at"]`.
+
+**Ambiguity:** `resolve_course()` returns `ambiguous` ONLY when multiple registry entries match the query by different match types (e.g., alias match on course A AND normalized title match on course B). The agent asks the user to clarify. It does NOT attempt semantic disambiguation.
 
 #### Step 3.4: Registry schema (`schemas/course-registry.schema.json`)
 
@@ -436,72 +478,179 @@ python scripts/course_router.py validate-registry --courses-root Courses/
 }
 ```
 
-### Stage 4: Concurrency, Durability, and Atomic Writes (Correction #5)
+### Stage 4: Persistence Integrity
 
 #### Step 4.1: Atomic file writes
 
-All JSON/JSONL writes use write-to-temp-then-rename pattern:
+All JSON/JSONL writes use write-to-temp-then-rename. Each temp file has a unique name to prevent collisions:
 
 ```python
+import os, tempfile
+
 def atomic_write(path: Path, content: str) -> None:
-    """Write atomically using temp file + rename.
-    On POSIX: os.rename is atomic within same filesystem.
-    On Windows: os.replace is atomic for same-volume operations.
-    Uses same directory for temp file to ensure same filesystem/volume.
-    """
-    tmp = path.with_suffix(path.suffix + '.tmp')
+    """Write atomically. Temp file in same directory (same volume) ensures
+    os.replace() is atomic on both POSIX and Windows."""
+    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix='.tmp', prefix=path.stem + '_')
     try:
-        tmp.write_text(content, encoding='utf-8')
-        os.replace(str(tmp), str(path))  # atomic on both POSIX and Windows
+        os.write(fd, content.encode('utf-8'))
+        os.close(fd)
+        fd = -1
+        os.replace(tmp, str(path))
     except:
-        if tmp.exists():
-            tmp.unlink()
+        if fd >= 0:
+            os.close(fd)
+        if os.path.exists(tmp):
+            os.unlink(tmp)
         raise
 ```
 
+Using `tempfile.mkstemp()` instead of `path.with_suffix('.tmp')` prevents collisions when two processes attempt concurrent writes. The `fd` is used directly to avoid race conditions.
+
 #### Step 4.2: Locking and conflict detection
 
-**Approach:** Advisory file locking using `fcntl.flock` (POSIX) / `msvcrt.locking` (Windows), wrapped in a cross-platform context manager. Stdlib-only.
+Advisory file locking, stdlib-only, cross-platform:
 
 ```python
+import sys, time
+if sys.platform == 'win32':
+    import msvcrt
+else:
+    import fcntl
+
 @contextmanager
-def registry_lock(courses_root: Path, timeout_seconds: int = 5):
-    """Advisory lock on .learnprint/.lock file.
-    - Creates lock file if not exists
-    - Acquires exclusive lock with timeout
-    - Releases on exit
-    - If lock cannot be acquired: raise error with message about concurrent access
+def workspace_lock(courses_root: Path, timeout_seconds: int = 5):
+    """Advisory exclusive lock on .learnprint/.lock.
+    Scope: held during any read-modify-write sequence on registry, reviews, or events.
+    NOT held during read-only operations (resolve, list, dashboard).
     """
+    lock_path = courses_root / '.learnprint' / '.lock'
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    f = lock_path.open('w')
+    deadline = time.monotonic() + timeout_seconds
+    try:
+        while True:
+            try:
+                if sys.platform == 'win32':
+                    msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except (IOError, OSError):
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        "Could not acquire workspace lock. Another Learnprint process "
+                        "may be running. If not, delete " + str(lock_path))
+                time.sleep(0.1)
+        yield
+    finally:
+        if sys.platform == 'win32':
+            try: msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+            except: pass
+        f.close()
 ```
 
-**Limitation acknowledged:** Advisory locks don't prevent a process that ignores them. This is documented. The lock prevents corruption from the common case (two agent sessions on the same machine), NOT from adversarial access.
+**Locking boundaries — which operations hold the lock:**
 
-#### Step 4.3: Interruption recovery
+| Operation | Lock held? | Why |
+|-----------|-----------|-----|
+| `course create` | Yes | Reads registry → validates slug uniqueness → creates dir → writes registry |
+| `record` (event append) | Yes | Reads events for dedup check → appends |
+| `plan-reviews` (with --approve) | Yes | Reads events → writes reviews.json |
+| `course resolve` | No | Read-only registry lookup |
+| `course list` | No | Read-only |
+| `course dashboard` | No | Read-only (writes INDEX.md but that's derived, not canonical) |
 
-- Registry writes are atomic (temp+rename). Interrupted writes leave a `.tmp` file.
-- On startup, `course-init` and `course-resolve` check for `.tmp` files and clean them.
-- `events.jsonl` is append-only. Interrupted appends may leave a partial last line. `events_read()` already uses `json.loads()` per line — a malformed last line is detected and reported (not silently dropped).
-- Registry consistency check: `validate-registry` command verifies every registered course directory exists and every existing course directory is registered.
+**Limitation:** Advisory locks don't prevent processes that ignore them. Documented.
 
-#### Step 4.4: Duplicate event prevention
+#### Step 4.3: Multi-file transaction for course creation
 
-`cmd_record()` already checks `known = {x.get("event_id") for x in events_read(p)}`. This remains the canonical check. The `event_id` is the deduplication key.
+`create_course()` modifies multiple files: creates a directory with 5 files + updates registry.json. This is NOT atomic. Crash recovery strategy:
 
-**Performance note for large event files:** For files with >10,000 events, the current `events_read()` loads all events into memory. This is acceptable for the expected scale (hundreds of events per learner). If scale concerns arise later, an index file can be added — but YAGNI now.
-
-#### Step 4.5: Registry consistency
-
-On any registry mutation (create, update, delete):
+```
 1. Acquire lock
-2. Read current registry
-3. Validate proposed change
-4. Create backup: `registry.json.bak` (overwrite previous backup)
-5. Write new registry atomically
+2. Read and validate registry
+3. Create course directory with artifacts (5 files)
+4. If step 3 succeeds: update registry atomically (temp+replace)
+5. If step 3 fails: clean up partial directory
 6. Release lock
 
-Recovery path: If `registry.json` is corrupted/missing but `registry.json.bak` exists, use backup. If both are gone, rebuild from filesystem scan (each course directory has `state.json` with `topic_id`).
+Crash recovery:
+- If crash after step 3 but before step 4: course directory exists but is NOT in registry.
+  → `course validate` detects "orphan directory" and reports it.
+  → User can re-run `course create` (idempotent: detects existing dir, registers it).
+  → Or user can delete the orphan dir manually.
+- If crash during step 4: registry.json.tmp exists.
+  → On next operation, detect .tmp files older than 60 seconds, clean them.
+  → Registry is unchanged (old version intact).
+- If crash after step 4: consistent state (course exists and is registered).
+```
 
-### Stage 5: Security and Privacy (Correction #6)
+This is NOT a true multi-file transaction. The invariant maintained: **registry never references a course that doesn't exist on disk.** The weaker invariant (a course dir may exist without registry entry) is detected by `course validate` and is recoverable.
+
+#### Step 4.4: Event append integrity
+
+`events.jsonl` is append-only. The read-modify-write sequence for event recording:
+
+```
+1. Acquire lock
+2. Read all event_ids from events.jsonl (for dedup)
+3. If event_id already exists: raise error
+4. Validate event
+5. Append single JSON line + newline
+6. Release lock
+```
+
+Interrupted append: may leave a partial JSON line at EOF. `events_read()` detects this:
+```python
+def events_read(path):
+    events = []
+    for i, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            events.append(json.loads(line))
+        except json.JSONDecodeError:
+            if i == len(path.read_text(encoding='utf-8').splitlines()):
+                # Last line may be truncated from interrupted write
+                print(f"WARNING: Malformed last line in {path}, likely from interrupted write. "
+                      f"Line {i} skipped.", file=sys.stderr)
+            else:
+                raise  # Corruption in middle of file is a real error
+    return events
+```
+
+#### Step 4.5: Migration interruption recovery
+
+Migration writes multiple files. Strategy:
+
+```
+1. Validate all source data before writing anything
+2. Write to staging area: Courses/.learnprint/.migrate-staging/
+3. If all staging writes succeed: move staged files to final locations
+4. Clean up staging area
+```
+
+If interrupted during step 2: staging area contains partial data. Re-running migration detects staging area and offers to clean it or resume.
+If interrupted during step 3: some files moved, some not. `course validate` detects inconsistencies. Re-running migration with `--approve` is idempotent (refuses to overwrite existing files, skips already-migrated topics).
+
+#### Step 4.6: Registry consistency
+
+On any registry mutation:
+1. Acquire lock
+2. Read current registry
+3. Validate proposed change (slug uniqueness, path validity)
+4. Write backup: `registry.json.bak` (atomic write, overwriting previous backup)
+5. Write new registry (atomic write)
+6. Release lock
+
+Recovery: `course validate` checks:
+- Every registered course directory exists on disk
+- Every course directory containing `state.json` is in registry
+- Reports orphans and missing directories
+- Does NOT auto-fix (requires explicit `--repair --approve`)
+
+### Stage 5: Security and Privacy
 
 #### Step 5.1: Path validation (`validate_path`)
 
@@ -518,23 +667,32 @@ def validate_path(proposed_path: str, courses_root: str) -> tuple[bool, str]:
     if '..' in parts or any(p.startswith('~') for p in parts):
         return False, "Path traversal not allowed"
 
-    # 3. Construct and resolve full path
+    # 3. Reject invalid characters (Windows-unsafe + control chars)
+    INVALID_CHARS = set('<>:"|?*') | {chr(c) for c in range(0, 32)}
+    for part in Path(proposed_path).parts:
+        if any(ch in INVALID_CHARS for ch in part):
+            return False, f"Invalid character in path component: {part}"
+        # Windows strips trailing dots and spaces silently — reject them
+        if part != part.strip('. '):
+            return False, f"Trailing dots/spaces in component: {part}"
+
+    # 4. Construct and resolve full path
     full = (courses / proposed_path).resolve()
 
-    # 4. Verify resolved path is within courses_root (catches symlink/junction escapes)
+    # 5. Verify resolved path is within courses_root (catches symlink/junction escapes)
     try:
         full.relative_to(courses)
     except ValueError:
         return False, "Path escapes courses root (possibly via symlink/junction)"
 
-    # 5. Check each component for Windows reserved names
+    # 6. Check each component for Windows reserved names
     RESERVED = {'CON', 'PRN', 'AUX', 'NUL'} | {f'COM{i}' for i in range(1, 10)} | {f'LPT{i}' for i in range(1, 10)}
     for part in full.relative_to(courses).parts:
         name_upper = part.split('.')[0].upper()
         if name_upper in RESERVED:
             return False, f"Windows reserved name: {part}"
 
-    # 6. Case-insensitive collision detection
+    # 7. Case-insensitive collision detection
     for part_path in [courses / *full.relative_to(courses).parts[:i]
                       for i in range(1, len(full.relative_to(courses).parts) + 1)]:
         parent = part_path.parent
@@ -544,12 +702,12 @@ def validate_path(proposed_path: str, courses_root: str) -> tuple[bool, str]:
             if target_name in existing and existing[target_name] != part_path.name:
                 return False, f"Case collision: '{part_path.name}' vs existing '{existing[target_name]}'"
 
-    # 7. Depth check
+    # 8. Depth check
     depth = len(full.relative_to(courses).parts)
     if depth > 6:
         return False, f"Path too deep ({depth} > 6 levels)"
 
-    # 8. Component length check
+    # 9. Component length check
     for part in full.relative_to(courses).parts:
         if len(part) > 100:
             return False, f"Component too long: {len(part)} chars"
@@ -569,8 +727,10 @@ Additionally, `create_course` checks AFTER directory creation that the created p
 #### Step 5.3: Unicode and case collision handling
 
 - `slugify()` uses `unicodedata.normalize('NFKD')` + ASCII folding for slug generation
+- `slugify()` strips all characters in the `INVALID_CHARS` set before slug generation
 - Case-insensitive collision check in `validate_path` compares `.lower()` of all path components
 - On case-insensitive filesystems (Windows, macOS default), the OS itself prevents case-only duplicates, but explicit checking gives a clear error message
+- Unicode normalization (NFC vs NFD) collision: `slugify()` normalizes to NFKD first, so `café` (NFC) and `café` (NFD) produce the same slug
 
 #### Step 5.4: Git tracking protection
 
@@ -603,7 +763,7 @@ The generated `SKILL.md` (line 209-223 of `learnprint.py`) copies `profile.json`
 
 **Mitigation:** The personal skill in `Courses/.learnprint/` is already gitignored. If installed to a repo-root path, that path is also gitignored (Step 5.4). The profile itself doesn't contain raw learner answers — it contains assessed claims with evidence IDs. The raw answers are in `events.jsonl` which is never copied to the skill.
 
-### Stage 6: Cross-Platform Rule System (Correction #7)
+### Stage 6: Cross-Platform Rule System
 
 #### Step 6.1: AGENTS.md restructure
 
@@ -626,9 +786,9 @@ This is Learnprint: a portable, evidence-gated adaptive learning workspace.
 
 ## Course workspace
 When the user says "Belajar: <topic>":
-1. Run: python scripts/course_router.py resolve "<topic>" --courses-root Courses/
+1. Run: python scripts/learnprint.py course resolve --query "<topic>"
 2. If found: load course state and resume.
-3. If not_found: classify topic, then run: python scripts/course_router.py create ... --approve
+3. If not_found: classify topic, then run: python scripts/learnprint.py course create ... --approve
 4. Load the learnprint-learn skill and begin.
 See rules/WORKSPACE.md and rules/COURSE-ROUTING.md.
 
@@ -644,9 +804,9 @@ See rules/WORKSPACE.md and rules/COURSE-ROUTING.md.
 - rules/PRIVACY.md — privacy, git policy, data protection
 ```
 
-#### Step 6.2: GEMINI.md adapter
+#### Step 6.2: GEMINI.md adapter — Gemini CLI only, with Antigravity dedup
 
-This file is needed ONLY for Gemini CLI, which loads `GEMINI.md` by default but NOT `AGENTS.md`:
+**Gemini CLI:** Loads `GEMINI.md` by default but NOT `AGENTS.md`. Needs adapter:
 
 ```markdown
 # Learnprint — Gemini CLI Context
@@ -654,7 +814,7 @@ This file is needed ONLY for Gemini CLI, which loads `GEMINI.md` by default but 
 @./AGENTS.md
 ```
 
-Gemini CLI supports the `@` import directive, which includes the referenced file's content. This avoids content duplication. One line, zero drift risk.
+Gemini CLI supports the `@` import directive, which includes the referenced file's content. One line, zero drift risk.
 
 **Alternative for Gemini CLI users:** Add to project `.gemini/settings.json`:
 ```json
@@ -662,11 +822,27 @@ Gemini CLI supports the `@` import directive, which includes the referenced file
 ```
 Document this option in README.
 
+**Antigravity dual-loading concern:** Antigravity loads BOTH `AGENTS.md` and `GEMINI.md` natively. Rules are cumulative — if GEMINI.md contains `@./AGENTS.md`, Antigravity loads AGENTS.md content TWICE (once natively, once via GEMINI.md import). This wastes tokens.
+
+**Resolution:** GEMINI.md content must NOT duplicate or import AGENTS.md. Instead:
+
+```markdown
+# Learnprint — Gemini CLI Context
+# If your host already loads AGENTS.md (most do), ignore this file.
+# For Gemini CLI only: load AGENTS.md as context.
+@./AGENTS.md
+```
+
+On Antigravity, both files load. AGENTS.md has the real content. GEMINI.md has the `@` import which Antigravity processes as an include, resulting in duplicate AGENTS.md tokens. This is ~40 lines of duplication — acceptable. If context budget is tight, users can delete GEMINI.md (only Gemini CLI needs it).
+
+**Mitigation documented in README:** "If using Antigravity and context is tight, delete GEMINI.md — Antigravity loads AGENTS.md natively."
+
 #### Step 6.3: NO other host adapters needed
 
 - **Kiro:** Loads AGENTS.md natively as always-included steering. No adapter needed.
 - **Claude Code:** Loads AGENTS.md via built-in mod. No adapter needed.
-- **OpenCode, Codex, Antigravity:** Load AGENTS.md natively. No adapter needed.
+- **OpenCode, Codex:** Load AGENTS.md natively. No adapter needed.
+- **Antigravity:** Loads AGENTS.md natively. GEMINI.md creates minor duplication (see above), tolerable.
 
 Eliminated from Rev 1: `.claude/skills/` wrappers, `.kiro/steering.md` adapter, `.kiro/skills/` copies. These are NOT needed for rules — they're only needed if you want skills discovered by those hosts, which is handled by `install.py`.
 
@@ -677,7 +853,7 @@ Eliminated from Rev 1: `.claude/skills/` wrappers, `.kiro/steering.md` adapter, 
 - Each host-specific path goes into `.gitignore`
 - `--personal-skill` flag: additionally install the personal skill (if generated)
 
-### Stage 7: Backward Compatibility and Migration (Correction #8)
+### Stage 7: Backward Compatibility and Migration
 
 #### Step 7.1: Old format support preserved
 
@@ -690,56 +866,108 @@ New subcommand:
 python scripts/learnprint.py migrate --from ./my-learning --to Courses/ --approve --dry-run
 ```
 
-Migration steps:
-1. Read old `manifest.json`, validate
-2. Read old `learner/profile.json`, validate
-3. Read old `events.jsonl`, validate each event
-4. Read old topic directories from `topics/`
-5. For each topic:
-   a. Resolve/create course in new registry using topic_id as slug
-   b. Copy `state.json`, `SYLLABUS.md`, `map.mmd`, `HANDOFF.md` to new course directory
-   c. DO NOT copy — reference: events stay in central ledger
-6. Copy `learner/profile.json` to `Courses/.learnprint/learner/profile.json`
-7. Copy `events.jsonl` to `Courses/.learnprint/events.jsonl`
-8. Copy `reviews.json` to `Courses/.learnprint/reviews.json`
-9. Create new `manifest.json` and `registry.json`
+**Migration phases (non-destructive staging model):**
 
-**Safety guarantees:**
-- `--dry-run` shows what would happen without writing
-- Never deletes old workspace
-- Never overwrites existing files in destination (refuses if course exists)
-- Requires `--approve`
-- Validates all data before starting migration
-- Generates migration report showing old→new path mapping
+```
+Phase 1: VALIDATE (read-only, fails fast)
+  1. Read old manifest.json → validate schema
+  2. Read old learner/profile.json → validate against schema
+  3. Read old events.jsonl → validate each event, count events
+  4. Read old reviews.json → validate
+  5. Enumerate old topics/ directories → verify each has state.json
+  6. Cross-check: every topic_id in events has a matching topic directory
+  7. Cross-check: every topic_id in reviews has a matching topic directory
+  8. If ANY validation fails → abort with specific error, no writes
+
+Phase 2: STAGE (write to staging area)
+  9. Create Courses/.learnprint/.migrate-staging/
+  10. For each topic:
+      a. Generate course_id (= topic_id slug)
+      b. Check no slug collision in staging registry
+      c. Write course artifacts to staging: state.json, SYLLABUS.md, MAP.mmd, HANDOFF.md, README.md
+      d. Copy references to old events by event_id (NOT by copying events)
+  11. Write staged registry.json
+  12. Copy profile.json to staging
+  13. Copy events.jsonl to staging (byte-for-byte, then verify line count)
+  14. Copy reviews.json to staging
+  15. Write staging manifest with checksums
+
+Phase 3: COMMIT (move from staging to final, under lock)
+  16. Acquire workspace lock
+  17. For each staged course dir: move to final location
+  18. Move staged registry.json, events.jsonl, reviews.json, profile.json to final
+  19. Remove staging directory
+  20. Release lock
+
+Phase 4: VERIFY
+  21. Read migrated events.jsonl → count must match source
+  22. Read migrated registry → every course exists on disk
+  23. Read migrated state.json per course → validate
+  24. Print migration report
+```
+
+**`--dry-run`:** Runs Phase 1 only + prints what Phase 2-3 would do. No writes.
+
+**Interrupted migration recovery:**
+- Crash during Phase 2: staging dir contains partial data. Re-run detects `/.migrate-staging/` and prompts: "Previous migration was interrupted. Clean up and restart? [y/n]"
+- Crash during Phase 3 (some files moved, some not): `course validate` detects inconsistencies. Re-run migration with `--approve` is idempotent: skips already-migrated topics (checks by course_id existence in final registry), moves remaining staged files.
+- Crash during Phase 4: data is complete, only verification was interrupted. Re-run `course validate` manually.
+
+**Manifest/course-ID reconciliation:**
+- Old manifest uses `topic_id`. New registry uses `course_id`.
+- Mapping: `course_id = slugify(topic_id)`. If the slugified form collides with an existing course, append `-migrated-N`.
+- Migration report shows old_topic_id → new_course_id mapping for every topic.
+- events.jsonl preserves `topic_id` field unchanged. The registry maps `course_id` → `topic_id` for event lookups.
+
+**Evidence content preservation:**
+- events.jsonl is copied byte-for-byte, not parsed-and-rewritten.
+- After copy: `sha256(source) == sha256(dest)` check.
+- Line count verification: `wc -l` equivalent.
+- If checksums don't match: abort, delete dest, report error.
+
+**Idempotency:**
+- Running migrate twice on the same source → second run sees courses already exist in registry, skips them, reports "already migrated".
+- Never deletes old workspace.
+- Never overwrites existing files in destination.
+- Requires `--approve`.
 
 #### Step 7.3: Migration tests
 
 | Test case | Expected |
 |-----------|----------|
-| `test_migrate_preserves_all_events` | Event count and content identical |
+| `test_migrate_preserves_all_events` | Event count, content, and SHA256 checksum match |
 | `test_migrate_preserves_profile` | Profile validated in new location |
 | `test_migrate_preserves_topic_state` | All competency states preserved |
-| `test_migrate_refuses_existing_target` | Error if course already exists |
+| `test_migrate_refuses_existing_target` | Error if course already exists in registry |
 | `test_migrate_dry_run_no_writes` | No files created |
 | `test_migrate_requires_approval` | Error without --approve |
+| `test_migrate_interrupted_staging_recovery` | Re-run after staged crash → clean restart |
+| `test_migrate_interrupted_commit_recovery` | Re-run after commit crash → idempotent completion |
+| `test_migrate_idempotent` | Second run skips already-migrated |
+| `test_migrate_topic_id_to_course_id_mapping` | Mapping report correct |
+| `test_migrate_slug_collision_handled` | Colliding slugs get `-migrated-N` suffix |
+| `test_migrate_cross_check_events_topics` | Events reference valid topics |
 | `test_old_commands_still_work` | `--workspace ./my-learning` commands pass |
 
 ### Stage 8: Workspace Initialization and Lifecycle
 
-#### Step 8.1: New subcommands in `learnprint.py`
+**Note:** Stage 8 implements the CLI surface defined in Stage 3.1. All subcommands use nested form `course <action>`, not flat `course-<action>`.
 
+#### Step 8.1: Subcommand implementations
+
+The CLI surface from Stage 3.1:
 ```
-course-init   --courses-root Courses/ --approve
-course-resolve --courses-root Courses/ --query "<topic>"
-course-create  --courses-root Courses/ --category <path> --slug <slug> --title <title> --goal <goal> --approve
-course-list    --courses-root Courses/
-course-dashboard --courses-root Courses/
-course-resume  --courses-root Courses/
-course-validate --courses-root Courses/
-migrate        --from <old-workspace> --to <courses-root> --approve [--dry-run]
+python scripts/learnprint.py course init     --approve
+python scripts/learnprint.py course resolve  --query "<topic>"
+python scripts/learnprint.py course create   --category <path> --slug <slug> --title <title> --goal <goal> --approve
+python scripts/learnprint.py course list
+python scripts/learnprint.py course dashboard
+python scripts/learnprint.py course resume
+python scripts/learnprint.py course validate
+python scripts/learnprint.py migrate         --from <old-workspace> --to <courses-root> --approve [--dry-run]
 ```
 
-All commands operate from repo root. No `cd` needed.
+All commands operate from repo root. No `cd` needed. `--courses-root` defaults to `Courses/`.
 
 #### Step 8.2: `Courses/` directory structure
 
@@ -763,7 +991,7 @@ Courses/
 
 #### Step 8.3: Dashboard generation (INDEX.md)
 
-`INDEX.md` is derived from `registry.json` + per-course `state.json` + `reviews.json`. It is NEVER a source of truth. Regenerated by `course-dashboard` command.
+`INDEX.md` is derived from `registry.json` + per-course `state.json` + `reviews.json`. It is NEVER a source of truth. Regenerated by `course dashboard` command.
 
 Content:
 - Course list with category, path, last activity
@@ -774,7 +1002,7 @@ Content:
 
 #### Step 8.4: Resume behavior
 
-`course-resume` logic:
+`course resume` logic:
 1. Read `registry.json`, find `active_course_id`
 2. If set and valid → return that course
 3. If not set → find course with most recent `last_activity`
@@ -792,7 +1020,7 @@ Add workspace-aware instructions to SKILL.md (within 8000 char limit, using prog
 ## Course workspace integration
 
 Before teaching, resolve the workspace:
-1. Run: python scripts/course_router.py resolve "<topic>" --courses-root Courses/
+1. Run: python scripts/learnprint.py course resolve --query "<topic>"
 2. If found: read the course's state.json and HANDOFF.md.
 3. If not_found: classify topic, create course via script.
 4. Load profile from Courses/.learnprint/learner/profile.json (or founder fallback).
@@ -814,7 +1042,7 @@ Total: ~330 lines. Well within any model's context.
 
 Do NOT load: all courses, full events.jsonl, registry, entire conversation history, all protocols.
 
-### Stage 10: Tests and Acceptance (Correction #9)
+### Stage 10: Tests and Acceptance
 
 #### Traceability Matrix
 
@@ -825,19 +1053,24 @@ Do NOT load: all courses, full events.jsonl, registry, entire conversation histo
 | C | Broad topic creates/reuses parent | test_routing.py | test_broad_topic_parent | Unit |
 | D | Similar but distinct subjects not merged | test_routing.py | test_similar_distinct_not_merged | Unit |
 | E | Ambiguous classification → clarification | test_routing.py | test_ambiguous_returns_needs_clarification | Unit |
-| F | Invalid/malicious paths rejected | test_routing.py | test_traversal_rejected, test_reserved_names, test_symlink_escape, test_absolute_path | Unit |
-| G | Cross-platform filenames | test_routing.py | test_unicode_slug, test_slash_in_title, test_case_collision | Unit |
+| F | Invalid/malicious paths rejected | test_routing.py | test_traversal_rejected, test_reserved_names, test_symlink_escape, test_absolute_path, test_invalid_chars, test_trailing_dots_spaces | Unit |
+| G | Cross-platform filenames | test_routing.py | test_unicode_slug, test_slash_in_title, test_case_collision, test_nfc_nfd_collision | Unit |
 | H | Root-only workflow, no cd | test_routing.py | test_all_commands_from_root | Integration |
 | I | Interrupted session resumes | test_routing.py | test_resume_most_recent, test_resume_multiple_asks | Unit |
 | J | Retention/evidence state intact | test_progress_regression.py | (all tests in Stage 1.4) | Unit |
-| K | Failed retention supersedes maintained | test_progress_regression.py | test_failed_delayed_downgrades_maintained | Unit |
+| K | Failed retention supersedes maintained | test_progress_regression.py | test_p1a_original_bug | Unit |
 | L | Courses/ not in git staging | test_privacy.py | test_gitignore_covers_courses | Integration (git status) |
 | M | Unavailable filesystem → honest fallback | Design | Skill instructions specify Tier 0/1/2 behavior | Design review |
-| N | Personal profile discoverable and precedence | test_core.py (extended) | test_profile_precedence_* | Unit |
+| N | Personal profile discoverable and precedence | test_core.py (extended) | test_profile_precedence_* (5 cases) | Unit |
 | O | Small-context model compact state | Design | Context budget spec in Stage 9.2 | Design review |
 | P | Repeated creation idempotent | test_routing.py | test_idempotent_creation | Unit |
 | Q | Corrupted registry recovery | test_routing.py | test_registry_recovery_from_backup, test_registry_rebuild_from_fs | Unit |
 | R | Cross-platform rule loading | Manual | Per-host verification checklist (below) | Manual |
+| S | First-run UX approval | test_routing.py | test_first_run_creates_workspace, test_first_run_requires_approval | Integration |
+| T | Persistence integrity | test_persistence.py | test_atomic_write_crash, test_lock_contention, test_event_dedup, test_truncated_last_line_recovery, test_tmp_cleanup | Unit |
+| U | Migration staging + recovery | test_migration.py | (all tests in Stage 7.3) | Unit |
+| V | Unassessed profile uses founder prefs | test_core.py | test_profile_precedence_unassessed_uses_founder_prefs | Unit |
+| W | Antigravity GEMINI.md duplication tolerable | Manual | Token count with/without GEMINI.md | Manual |
 
 **Note:** Unit test PASS proves deterministic code correctness. It does NOT prove live-host compatibility. Requirement R requires manual verification in each actual host.
 
@@ -849,11 +1082,11 @@ For each supported host, manually verify:
 |-------|--------|--------------|
 | AGENTS.md loaded | Ask agent "what rules apply to this project?" | Agent references Learnprint invariants |
 | Skills discovered | Ask agent "what skills are available?" | learnprint-assess and learnprint-learn listed |
-| Course routing works | Say "Belajar: in/on/at" | Agent runs course_router.py, creates/finds course |
+| Course routing works | Say "Belajar: in/on/at" | Agent runs `learnprint.py course resolve`, creates/finds course |
 | Profile loaded | Check which profile agent references | Local if present, founder fallback otherwise |
 | Evidence recorded | Complete a teaching unit, check events.jsonl | Event appended with correct format |
 
-### Operational UX (Correction #10)
+### Operational UX
 
 **Single command, single root:**
 
@@ -861,9 +1094,9 @@ User says: "Belajar: in/on/at"
 
 Agent flow (all from repo root):
 1. Agent reads AGENTS.md → sees workspace instructions
-2. Runs `python scripts/course_router.py resolve "in/on/at" --courses-root Courses/`
+2. Runs `python scripts/learnprint.py course resolve --query "in/on/at"`
 3. Result: found (existing course) OR not_found (new course needed)
-4. If not_found: agent classifies topic, runs `create` with --approve
+4. If not_found: agent classifies topic, runs `course create` with --approve
 5. Agent loads course state.json, HANDOFF.md, and profile
 6. Agent invokes learnprint-learn skill
 7. Teaching begins from repo root. No cd.
@@ -871,13 +1104,13 @@ Agent flow (all from repo root):
 User says: "Continue"
 
 Agent flow:
-1. Runs `python scripts/course_router.py resume --courses-root Courses/`
+1. Runs `python scripts/learnprint.py course resume`
 2. Gets most recent active course
 3. Loads state and continues
 
 **No duplicates:** `resolve` checks registry first. Same topic = same course. Aliases prevent re-creation.
 
-**Dashboard is derived:** `INDEX.md` is regenerated by `course-dashboard`. Never edited manually. Never used as state source.
+**Dashboard is derived:** `INDEX.md` is regenerated by `course dashboard`. Never edited manually. Never used as state source.
 
 ---
 
@@ -886,15 +1119,17 @@ Agent flow:
 ### New files
 | File | Purpose |
 |------|---------|
-| `scripts/course_router.py` | Deterministic routing, slug, validation, registry, dashboard |
+| `scripts/learnprint_routing.py` | Internal routing library: slug, validation, registry, dashboard (imported by learnprint.py) |
 | `schemas/course-registry.schema.json` | Registry schema |
-| `rules/WORKSPACE.md` | Workspace contract, lifecycle, single-root operation |
-| `rules/COURSE-ROUTING.md` | Routing decision table, taxonomy, alias handling |
+| `rules/WORKSPACE.md` | Workspace contract, lifecycle, single-root operation, standing approval scope |
+| `rules/COURSE-ROUTING.md` | Routing decision table, taxonomy guidance, alias handling |
 | `rules/EVIDENCE.md` | Evidence integrity, state machine, retention rules |
 | `rules/PRIVACY.md` | Privacy, git policy, data protection, pre-commit hook |
 | `tests/test_progress_regression.py` | P1-A state machine regression tests |
 | `tests/test_routing.py` | Course routing tests (A-H, P, Q) |
 | `tests/test_privacy.py` | Privacy and git protection tests |
+| `tests/test_migration.py` | Migration tests |
+| `tests/test_persistence.py` | Atomic writes, locking, crash recovery tests |
 | `tests/fixtures/` | Isolated test data |
 | `templates/course-registry.json` | Empty registry template |
 | `GEMINI.md` | Gemini CLI adapter (1 line: `@./AGENTS.md`) |
@@ -902,15 +1137,15 @@ Agent flow:
 ### Modified files
 | File | Change |
 |------|--------|
-| `scripts/learnprint.py` | P1-A state machine rewrite, new subcommands, atomic writes, migration |
+| `scripts/learnprint.py` | P1-A state machine rewrite, new `course` subcommands (delegating to `learnprint_routing`), `migrate` subcommand, atomic writes, locking |
 | `scripts/install.py` | Add `--self`, `--personal-skill` modes |
-| `AGENTS.md` | Restructure as short universal hub |
+| `AGENTS.md` | Restructure as short universal hub (~40 lines) |
 | `skills/learnprint-learn/SKILL.md` | Workspace-aware profile loading and course integration |
 | `.gitignore` | Add `Courses/`, personal skill paths |
 | `tests/test_core.py` | Extend with profile precedence tests |
-| `docs/PLATFORMS.md` | Corrected compatibility matrix |
+| `docs/PLATFORMS.md` | Corrected compatibility matrix (Antigravity dual-load note) |
 | `docs/DATA-CONTRACT.md` | Updated for Courses/ layout |
-| `README.md` | Updated workflow, installation, cross-platform instructions |
+| `README.md` | Updated workflow, installation, cross-platform instructions, Antigravity GEMINI.md note |
 
 ### NOT modified
 | File | Reason |
@@ -928,16 +1163,19 @@ Agent flow:
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|-----------|--------|------------|
-| Concurrent agent access corrupts registry | Medium | High | Advisory locking + atomic writes + backup-before-write. Document limitation. |
+| Concurrent agent access corrupts registry | Medium | High | Advisory locking + atomic writes + backup-before-write. Limitation documented. |
 | LLM ignores routing script, creates duplicates | Medium | Medium | AGENTS.md rule "ALWAYS run script first". Script validates. Registry dedup. |
 | Gemini CLI doesn't load AGENTS.md | High (by design) | Medium | GEMINI.md with @import. Document settings.json config alternative. |
-| Path traversal via crafted topic name | Low | High | Deterministic validate_path(). Symlink resolution. Reserved name check. |
+| Antigravity loads AGENTS.md twice (via AGENTS.md + GEMINI.md) | High | Low | ~40 lines duplication. Documented: delete GEMINI.md if context tight. |
+| Path traversal via crafted topic name | Low | High | Deterministic validate_path(). Symlink resolution. Reserved names. Invalid chars. Trailing dots/spaces. |
 | .gitignore bypassed via `git add -f` | Low | High | Pre-commit hook (optional). PRIVACY.md warning. Agent instructions. |
-| Breaking backward compatibility with my-learning/ | Low | High | Old format preserved. Migration is opt-in, non-destructive. |
+| Breaking backward compatibility with my-learning/ | Low | High | Old format preserved. Migration is opt-in, non-destructive, staged. |
 | SKILL.md exceeds 8000 chars after workspace additions | Medium | Low | Progressive disclosure: brief SKILL.md, details in references/. |
-| State machine edge case not covered | Medium | Medium | 16 specific regression tests. Explicit transition table. |
+| State machine edge case not covered | Low | Medium | 19 specific regression tests. Explicit demonstration-cycle algorithm. |
 | Generated personal skill leaks to git | Low | High | Three-path gitignore. install.py refuses non-gitignored dest in public repo. |
 | Registry rebuild after corruption misses courses | Low | Medium | Rebuild scans filesystem for state.json files. Warns about unregistered dirs. |
+| Migration interrupted mid-commit | Low | High | Staging area + idempotent re-run + course validate. |
+| Unassessed profile silently overrides founder defaults | Medium | Medium | Explicit assessment_status check in profile precedence chain. |
 
 ---
 
@@ -962,41 +1200,41 @@ Agent flow:
 ```
 Stage 1: P1-A state machine          ← foundation, no dependencies
 Stage 2: P1-B profile precedence     ← independent of Stage 1
-Stage 3: Course routing engine        ← independent of 1-2
-Stage 4: Atomic writes / locking      ← used by Stage 3, can develop in parallel
-Stage 5: Security / privacy           ← integrated with Stages 3-4
-Stage 6: Cross-platform rules         ← independent of 1-5
-Stage 7: Migration                    ← depends on Stage 3 (registry) + Stage 8 (workspace)
-Stage 8: Workspace initialization     ← depends on Stages 3-5
-Stage 9: Learning engine integration  ← depends on Stages 3, 6, 8
-Stage 10: Tests + acceptance          ← runs throughout, final verification at end
+Stage 3: Course routing + first-run  ← independent of 1-2, defines CLI surface
+Stage 4: Persistence integrity       ← used by Stage 3 operations, can develop in parallel
+Stage 5: Security / privacy          ← integrated with Stages 3-4
+Stage 6: Cross-platform rules        ← independent of 1-5
+Stage 7: Migration                   ← depends on Stage 3 (registry) + Stage 8 (workspace)
+Stage 8: Workspace initialization    ← depends on Stages 3-5, implements CLI from Stage 3
+Stage 9: Learning engine integration ← depends on Stages 3, 6, 8
+Stage 10: Tests + acceptance         ← runs throughout, final verification at end
 ```
 
 Proposed commit sequence on `feature/hardening-workspace`:
-1. `fix: P1-A competency state machine with complete transition table`
-2. `fix: P1-B profile-first personalization with precedence chain`
-3. `feat: deterministic course routing engine`
-4. `feat: atomic writes, advisory locking, registry durability`
+1. `fix: P1-A competency state machine with demonstration-cycle model`
+2. `fix: P1-B profile-first personalization with unassessed precedence`
+3. `feat: course routing engine with single CLI (learnprint.py course)`
+4. `feat: atomic writes, advisory locking, crash recovery`
 5. `feat: path security validation + privacy protection`
 6. `feat: cross-platform rules (AGENTS.md restructure + GEMINI.md adapter)`
-7. `feat: Courses/ workspace initialization + lifecycle`
-8. `feat: my-learning/ to Courses/ migration`
+7. `feat: Courses/ workspace initialization + first-run UX`
+8. `feat: my-learning/ to Courses/ migration with staging`
 9. `feat: learning engine integration with course workspace`
 10. `feat: dashboard generation + resume behavior`
-11. `docs: updated README, PLATFORMS, DATA-CONTRACT`
+11. `docs: updated README, PLATFORMS (Antigravity note), DATA-CONTRACT`
 
 ## Delegation Strategy
 
 | Step | Owner | Parallel batch | Why |
 |------|-------|----------------|-----|
-| 1.1-1.4 | builder | - | State machine: sequential, each step depends on prior |
+| 1.1-1.4 | builder | A | State machine: self-contained, no external deps |
 | 2.1-2.3 | builder | A | Profile: independent of Stage 1 |
-| 3.1-3.4 | builder | A | Routing: independent of Stages 1-2 |
-| 4.1-4.5 | builder | - | Durability: integrated, sequential |
+| 3.0-3.4 | builder | A | Routing + first-run UX: independent of Stages 1-2 |
+| 4.1-4.6 | builder | - | Persistence: integrated with routing, sequential |
 | 5.1-5.5 | builder | - | Security: integrated with routing |
 | 6.1-6.4 | builder | B | Rules: independent of implementation stages |
 | 7.1-7.3 | builder | - | Migration: depends on 3+8 |
-| 8.1-8.4 | builder | - | Workspace: depends on 3-5 |
+| 8.1-8.4 | builder | - | Workspace: depends on 3-5, implements Stage 3 CLI |
 | 9.1-9.2 | builder | - | Integration: depends on 3,6,8 |
 | 10 | builder | - | Final verification |
 | Review | reviewer | C | Read-only review after all stages complete |
@@ -1010,5 +1248,3 @@ Batch C = Review after all implementation.
 Single workstream, single branch `feature/hardening-workspace`. All stages on same branch. Merge to main after full suite passes and user approves.
 
 No sibling plans. No parallel branches.
-
-**Git governance decision needed before implementation starts** (see Context section).
