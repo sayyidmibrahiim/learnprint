@@ -135,6 +135,16 @@ def append_event_line(path, line: str, durable: bool = True) -> None:
     # O_BINARY (no-op on POSIX): without it Windows translates \n to \r\n,
     # corrupting byte offsets used by ledger diagnostics and repair.
     flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_BINARY", 0)
+    if path.exists():
+        try:
+            existing = path.read_bytes()
+        except OSError:
+            existing = b""
+        if existing.strip() and not existing.endswith(b"\n"):
+            raise LedgerDamage(
+                f"ledger {path}: final record missing terminal newline; "
+                "append refused (would merge two events). "
+                "Run course repair-evidence, then retry.")
     fd = os.open(str(path), flags, 0o600)
     try:
         _write_all(fd, payload)
@@ -343,7 +353,8 @@ def ledger_diagnose(path, workspace_root=None):
     damage = []
     records = 0
     offset = 0
-    for line_no, raw_line in enumerate(raw.split(b"\n"), 1):
+    lines = raw.split(b"\n")
+    for line_no, raw_line in enumerate(lines, 1):
         stripped = raw_line.strip()
         if stripped:
             try:
@@ -358,6 +369,18 @@ def ledger_diagnose(path, workspace_root=None):
                     "is_truncated_tail": not raw.endswith(b"\n") and line_no == raw.count(b"\n") + 1,
                 })
         offset += len(raw_line) + 1
+    if raw.strip() and not raw.endswith(b"\n") and not damage:
+        # Final record parses but lacks its terminator: one append away
+        # from two logical events merging into one malformed record.
+        damage.append({
+            "line_no": len(lines),
+            "byte_offset": len(raw) - len(lines[-1]),
+            "reason": "final record missing terminal newline; "
+                      "append refused until repaired",
+            "raw_bytes_preserved": True,
+            "is_truncated_tail": False,
+            "is_missing_terminator": True,
+        })
     return {
         "status": "damaged" if damage else "ok",
         "path": str(path),
@@ -387,6 +410,11 @@ def ledger_read_trusted(path, workspace_root=None):
     raw = path.read_bytes()
     if not raw.strip():
         return []
+    if not raw.endswith(b"\n"):
+        raise LedgerDamage(
+            f"ledger {path}: final record missing terminal newline; "
+            "a further append would merge two events into one malformed "
+            "record. Run course repair-evidence, then retry.")
     events = []
     seen_ids = set()
     offset = 0
@@ -411,54 +439,99 @@ def ledger_read_trusted(path, workspace_root=None):
     return events
 
 
-def ledger_repair_truncate_partial_tail(path):
-    """EXPLICIT non-destructive repair for a truncated final record only.
+def _ledger_repair_backup(path, raw):
+    """Immutable uniquely-named backup of pre-repair bytes (atomic + fsync).
 
-    Allocates its own immutable uniquely-named backup
-    (<name>.bak.<UTC-ts>.<sha8>); refuses if that name exists. Audit entry
-    (pre/post SHA256) is appended via the durable locked primitive.
+    Refuses to overwrite an existing backup. Returns backup_path.
     """
-    path = Path(path)
-    report = ledger_diagnose(path)
-    if report["status"] != "damaged":
-        return report
-    tail = [d for d in report["damage"] if d["is_truncated_tail"]]
-    others = [d for d in report["damage"] if not d["is_truncated_tail"]]
-    if others:
-        raise LedgerDamage(
-            f"ledger {path} line {others[0]['line_no']}: "
-            f"{len(others)} damaged record(s) that are not a truncated tail; "
-            "manual review required")
-    if len(tail) != 1:
-        raise LedgerDamage(f"ledger {path}: multiple damaged tail records; "
-                           "manual review required")
-
-    raw = path.read_bytes()
-    cut = tail[0]["byte_offset"]
     sha8 = hashlib.sha256(raw).hexdigest()[:8]
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     backup_path = path.parent / f"{path.name}.bak.{stamp}.{sha8}"
     if backup_path.exists():
         raise LedgerDamage(f"ledger {path}: backup {backup_path.name} already "
                            "exists; refusing to overwrite a previous backup")
-    with open(backup_path, "wb") as fh:
-        fh.write(raw)
-    with open(path, "r+b") as fh:
-        fh.truncate(cut)
-    log = {
-        "repaired_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-        "original_sha256": report["sha256"],
-        "backup_path": str(backup_path),
-        "backup_sha256": hashlib.sha256(raw).hexdigest(),
-        "repaired_sha256": hashlib.sha256(raw[:cut]).hexdigest(),
-        "removed_byte_offset": cut,
-        "removed_line_no": tail[0]["line_no"],
-        "removed_reason": "truncated tail from interrupted append",
+    atomic_write_bytes(backup_path, raw)
+    return backup_path
+
+
+def ledger_repair_truncate_partial_tail(path):
+    """EXPLICIT non-destructive repair for two interrupted-append cases:
+
+    1. Truncated final record (unparsable tail): truncate at the damage
+       offset, preserving all complete records.
+    2. Complete final record missing its terminal newline: append the
+       missing newline, preserving the record.
+
+    Both paths allocate an immutable uniquely-named backup
+    (<name>.bak.<UTC-ts>.<sha8>), refuse backup overwrite, fsync every
+    mutation, and append a hash-verified audit entry via the durable
+    primitive. Any other damage shape raises LedgerDamage for manual
+    review. Idempotent: a clean ledger returns its ok report unchanged.
+    """
+    path = Path(path)
+    report = ledger_diagnose(path)
+    if report["status"] != "damaged":
+        return report
+    missing = [d for d in report["damage"] if d.get("is_missing_terminator")]
+    tail = [d for d in report["damage"] if d["is_truncated_tail"]]
+    others = [d for d in report["damage"]
+              if not d["is_truncated_tail"] and not d.get("is_missing_terminator")]
+    if others:
+        raise LedgerDamage(
+            f"ledger {path} line {others[0]['line_no']}: "
+            f"{len(others)} damaged record(s) that are not a truncated tail; "
+            "manual review required")
+    raw = path.read_bytes()
+    if missing and not tail and len(missing) == 1:
+        backup_path = _ledger_repair_backup(path, raw)
+        flags = os.O_WRONLY | os.O_APPEND | getattr(os, "O_BINARY", 0)
+        fd = os.open(str(path), flags)
+        try:
+            _write_all(fd, b"\n")
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        _fsync_dir(path.parent)
+        repaired = raw + b"\n"
+        log = {
+            "repaired_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "original_sha256": report["sha256"],
+            "backup_path": str(backup_path),
+            "backup_sha256": hashlib.sha256(raw).hexdigest(),
+            "repaired_sha256": hashlib.sha256(repaired).hexdigest(),
+            "removed_byte_offset": None,
+            "removed_line_no": missing[0]["line_no"],
+            "removed_reason": "restored missing terminal newline; no bytes removed",
+            "raw_removed_bytes": "",
+        }
+        append_event_line(path.parent / "recovery-log.jsonl",
+                          json.dumps(log, ensure_ascii=False), durable=True)
+        return ledger_diagnose(path)
+    if tail and not missing and len(tail) == 1:
+        cut = tail[0]["byte_offset"]
+        backup_path = _ledger_repair_backup(path, raw)
+        with open(path, "r+b") as fh:
+            fh.truncate(cut)
+            fh.flush()
+            os.fsync(fh.fileno())
+        _fsync_dir(path.parent)
+        log = {
+            "repaired_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "original_sha256": report["sha256"],
+            "backup_path": str(backup_path),
+            "backup_sha256": hashlib.sha256(raw).hexdigest(),
+            "repaired_sha256": hashlib.sha256(raw[:cut]).hexdigest(),
+            "removed_byte_offset": cut,
+            "removed_line_no": tail[0]["line_no"],
+            "removed_reason": "truncated tail from interrupted append",
         "raw_removed_bytes": raw[cut:].hex(),
-    }
-    append_event_line(path.parent / "recovery-log.jsonl",
-                      json.dumps(log, ensure_ascii=False), durable=True)
-    return ledger_diagnose(path)
+        }
+        append_event_line(path.parent / "recovery-log.jsonl",
+                          json.dumps(log, ensure_ascii=False), durable=True)
+        return ledger_diagnose(path)
+    raise LedgerDamage(f"ledger {path}: ambiguous damage shape "
+                       f"({len(tail)} truncated tail(s), {len(missing)} "
+                       "unterminated record(s)); manual review required")
 
 
 def validate_event(e):

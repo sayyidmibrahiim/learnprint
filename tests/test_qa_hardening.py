@@ -147,5 +147,86 @@ class TestB2RegistryIntegrity(unittest.TestCase):
             self.assertIn("duplicate", buf.getvalue().lower())
 
 
+def valid_event(eid="e1", topic="t", comp="c1"):
+    return {"event_id": eid, "date": "2026-10-11T10:00:00+00:00",
+            "topic_id": topic, "competency_id": comp,
+            "task_type": "independent_application",
+            "observed_answer": "a", "expected_reasoning": "r",
+            "help_level": "none", "rubric": {"application": 2},
+            "feedback": "f", "grader": "ai_reviewed",
+            "evidence_origin": "observed_response"}
+
+
+class TestB3LedgerTerminatorSafety(unittest.TestCase):
+    def _ledger(self, root):
+        return root / ".learnprint" / "events.jsonl"
+
+    def test_diagnose_flags_missing_terminal_newline(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(d)
+            lp = self._ledger(root)
+            lp.write_bytes((json.dumps(valid_event()) ).encode("utf-8"))  # no \n
+            diag = mod.ledger_diagnose(lp, workspace_root=root)
+            self.assertEqual(diag["status"], "damaged")
+
+    def test_trusted_read_rejects_unterminated_ledger(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(d)
+            lp = self._ledger(root)
+            lp.write_bytes((json.dumps(valid_event())).encode("utf-8"))
+            with self.assertRaises(mod.LedgerDamage):
+                mod.ledger_read_trusted(lp, workspace_root=root)
+
+    def test_append_refuses_unterminated_file(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(d)
+            lp = self._ledger(root)
+            lp.write_bytes((json.dumps(valid_event())).encode("utf-8"))
+            with self.assertRaises(mod.LedgerDamage):
+                mod.append_event_line(lp, json.dumps(valid_event("e2")))
+
+    def test_repair_restores_terminator_preserving_record(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(d)
+            lp = self._ledger(root)
+            lp.write_bytes((json.dumps(valid_event())).encode("utf-8"))
+            report = mod.ledger_repair_truncate_partial_tail(lp)
+            self.assertEqual(report["status"], "ok")
+            self.assertEqual(report["records"], 1)
+            self.assertTrue(lp.read_bytes().endswith(b"\n"))
+            recs = mod.ledger_read_trusted(lp, workspace_root=root)
+            self.assertEqual(len(recs), 1)
+            self.assertEqual(recs[0]["event_id"], "e1")
+
+    def test_record_refuses_then_succeeds_after_repair(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(d)
+            entry = mod.course_create(**create_kwargs(root))
+            lp = self._ledger(root)
+            # Seed one valid event via the trusted path, then strip terminator
+            # to simulate an interrupted write.
+            mod.append_event_line(lp, json.dumps(valid_event("e0", topic=entry["course_id"])))
+            raw = lp.read_bytes()
+            lp.write_bytes(raw.rstrip(b"\n"))
+            args = _ns(workspace=str(root), event_id="e1", topic=entry["course_id"],
+                       competency="c1", task_type="independent_application",
+                       answer="a", rubric='{"application": 2}', expected="r",
+                       feedback="f", approve=True, course_id=entry["course_id"],
+                       help="none", confidence=None, grader="ai_reviewed",
+                       confirms=None, corrects=None, corroborates=None,
+                       grader_source=None)
+            with self.assertRaises(mod.LedgerDamage):
+                mod._cmd_record_courses(args, root)
+            mod.ledger_repair_truncate_partial_tail(lp)
+            self.assertEqual(mod._cmd_record_courses(args, root), 0)
+            recs = mod.ledger_read_trusted(lp, workspace_root=root)
+            self.assertEqual([r["event_id"] for r in recs], ["e0", "e1"])
+
+
 if __name__ == "__main__":
     unittest.main()
