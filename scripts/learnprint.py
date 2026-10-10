@@ -859,20 +859,81 @@ def registry_path(courses_root):
 def registry_read(courses_root):
     p = registry_path(courses_root)
     if not p.exists():
+        # The lock file alone is infrastructure, not initialization:
+        # workspace_lock() creates .learnprint/.lock on demand (e.g. a
+        # fresh migrate destination). Only canonical workspace artifacts
+        # mark a workspace as initialized whose missing registry is an
+        # error rather than an empty workspace.
+        lp = Path(courses_root) / ".learnprint"
+        initialized = lp.exists() and any(
+            (lp / m).exists()
+            for m in ("registry.json.bak", "events.jsonl", "approval.json",
+                      "config.json", "learner", "reviews.json"))
+        if initialized:
+            raise ValueError(
+                f"registry missing in initialized workspace: {p}; "
+                "restore registry.json from registry.json.bak, or re-run course init")
         return {"schema_version": "1.0", "courses": [], "active_course_id": None}
-    data = json.loads(p.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (ValueError, OSError) as exc:
+        raise ValueError(
+            f"registry corrupt: {p} ({exc}); "
+            "restore from registry.json.bak, do not edit by hand")
     if not isinstance(data, dict) or not isinstance(data.get("courses"), list):
-        raise ValueError(f"registry corrupt: {p}")
+        raise ValueError(f"registry corrupt: {p} (schema); "
+                         "restore from registry.json.bak")
     return data
 
 
+def atomic_write_bytes(path, data: bytes, durable: bool = True) -> None:
+    """Byte-level atomic replace via unique temp file + os.replace()."""
+    import tempfile
+    path = Path(path)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp",
+                               prefix=path.stem + "_")
+    try:
+        _write_all(fd, data)
+        if durable:
+            os.fsync(fd)
+        os.close(fd)
+        fd = -1
+        os.replace(tmp, str(path))
+        if durable:
+            _fsync_dir(path.parent)
+    except BaseException:
+        if fd >= 0:
+            os.close(fd)
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
 def registry_write(courses_root, registry):
-    """Backup-then-write under the caller's lock (plan Step 4.6)."""
+    """Backup-then-write under the caller's lock (plan Step 4.6).
+
+    The backup preserves the actual PRIOR registry bytes, never a copy of
+    the new payload: a backup identical to the new write would promise a
+    recovery that does not exist.
+    """
     d = Path(courses_root) / ".learnprint"
     d.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(registry, ensure_ascii=False, indent=2) + "\n"
-    atomic_write(d / "registry.json.bak", payload)
-    atomic_write(d / "registry.json", payload)
+    payload = (json.dumps(registry, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    cur = d / "registry.json"
+    bak = d / "registry.json.bak"
+    if cur.exists():
+        try:
+            prior = cur.read_bytes()
+        except OSError:
+            prior = None
+        if prior is not None and prior != payload:
+            atomic_write_bytes(bak, prior)
+        elif not bak.exists():
+            atomic_write_bytes(bak, payload)
+    else:
+        if not bak.exists():
+            atomic_write_bytes(bak, payload)
+    atomic_write_bytes(cur, payload)
 
 
 def _cname(course_id):
@@ -941,22 +1002,70 @@ def course_create(courses_root, category_path, title, goal, aliases=(),
                         f"({_cname(c.get('course_id'))}); ask the user which course was meant")
         course_dir = root / rel
         adopted = False
+        existing_state = None
         if course_dir.exists():
-            if (course_dir / "state.json").exists():
-                adopted = True  # crash-recovery: orphan dir, register it
-            else:
+            st_path = course_dir / "state.json"
+            if not st_path.exists():
                 raise ValueError(f"Refusing to overwrite: {course_dir}")
+            # Crash-recovery path: a directory left behind by an interrupted
+            # create. Validate its identity BEFORE touching the registry —
+            # a corrupt or conflicting orphan must refuse, never be adopted
+            # with a swallowed state-update error.
+            try:
+                existing_state = json.loads(st_path.read_text(encoding="utf-8"))
+            except (ValueError, OSError) as exc:
+                raise ValueError(
+                    f"Refusing to adopt directory with unreadable state.json: "
+                    f"{course_dir} ({exc}); repair or remove it manually")
+            if not isinstance(existing_state, dict):
+                raise ValueError(
+                    f"Refusing to adopt directory with invalid state.json: {course_dir}")
+            adopted = True
         else:
             course_dir.mkdir(parents=True)
-            (course_dir / "README.md").write_text(f"# {title}\n\nGoal: {goal}\n", encoding="utf-8")
-            (course_dir / "SYLLABUS.md").write_text(f"# {title} — syllabus\n", encoding="utf-8")
-            (course_dir / "MAP.mmd").write_text("flowchart TD\n", encoding="utf-8")
-            (course_dir / "HANDOFF.md").write_text(f"# Handoff — {title}\n", encoding="utf-8")
-            (course_dir / "state.json").write_text(json.dumps(
-                {"schema_version": "1.0", "course_id": None, "goal": goal,
-                 "learning_scope": [], "sources": []}, ensure_ascii=False, indent=2) + "\n",
-                encoding="utf-8")
-        course_id = routing.allocate_course_id(registry)
+        if adopted and isinstance((existing_state or {}).get("course_id"), str):
+            orphan_id = existing_state["course_id"]
+            if not routing.is_course_id(orphan_id):
+                raise ValueError(
+                    f"Refusing to adopt directory with invalid course_id: {course_dir}")
+            if any(c.get("course_id") == orphan_id for c in registry.get("courses", [])):
+                raise ValueError(
+                    f"Orphan directory identity already registered: {orphan_id}")
+            # Interrupted create BEFORE the registry commit: reuse the orphan
+            # identity so a retry converges to one course (never reallocates).
+            course_id = orphan_id
+        else:
+            course_id = routing.allocate_course_id(registry)
+        # Artifact writes are atomic and non-destructive: existing user
+        # content is never overwritten; state carries the course_id BEFORE
+        # the registry commit so the registry never advertises a course
+        # whose state is inconsistent.
+        artifacts = {
+            "README.md": f"# {title}\n\nGoal: {goal}\n",
+            "SYLLABUS.md": f"# {title} — syllabus\n",
+            "MAP.mmd": "flowchart TD\n",
+            "HANDOFF.md": f"# Handoff — {title}\n",
+        }
+        for name, content in artifacts.items():
+            p = course_dir / name
+            if not p.exists():
+                atomic_write(p, content)
+        state_path = course_dir / "state.json"
+        if isinstance(existing_state, dict):
+            st = dict(existing_state)
+            st.setdefault("schema_version", "1.0")
+            st.setdefault("goal", goal)
+            st.setdefault("learning_scope", [])
+            st.setdefault("sources", [])
+            st["course_id"] = course_id
+        else:
+            st = {"schema_version": "1.0", "course_id": course_id, "goal": goal,
+                  "learning_scope": [], "sources": []}
+        atomic_write(state_path, json.dumps(st, ensure_ascii=False, indent=2) + "\n")
+        verify = json.loads(state_path.read_text(encoding="utf-8"))
+        if verify.get("course_id") != course_id:
+            raise ValueError(
+                f"State verification failed after write: {state_path}")
         entry = {
             "course_id": course_id,
             "title": title,
@@ -974,14 +1083,6 @@ def course_create(courses_root, category_path, title, goal, aliases=(),
         }
         registry.setdefault("courses", []).append(entry)
         registry_write(root, registry)
-        state_path = course_dir / "state.json"
-        try:
-            st = json.loads(state_path.read_text(encoding="utf-8"))
-            st["course_id"] = course_id
-            state_path.write_text(json.dumps(st, ensure_ascii=False, indent=2) + "\n",
-                                  encoding="utf-8")
-        except (ValueError, OSError):
-            pass
         entry["adopted_existing_dir"] = adopted
         return entry
 
@@ -1228,18 +1329,61 @@ def cmd_course_resume(a):
     return 0
 
 
-def cmd_course_validate(a):
-    root = _courses_root(a)
-    registry = registry_read(root)
+def collect_workspace_problems(root, registry):
+    """Read-only coherence audit: registry/state identity, duplicates,
+    orphans, ledger health, stale temp files. Returns [problems]."""
+    root = Path(root)
     problems = []
-    for c in registry.get("courses", []):
-        if not (root / c.get("rel_path", "") / "state.json").exists():
+    courses = registry.get("courses", [])
+    seen_ids = {}
+    for c in courses:
+        cid = c.get("course_id")
+        if cid in seen_ids:
+            problems.append(f"duplicate course_id {cid}: {seen_ids[cid]} and {c.get('rel_path')}")
+        else:
+            seen_ids[cid] = c.get("rel_path")
+    seen_titles = {}
+    for c in courses:
+        key = (c.get("category_path"), c.get("normalized_title"))
+        if key in seen_titles:
+            problems.append(
+                f"duplicate course title in category {key[0]!r}: "
+                f"{seen_titles[key]} and {c.get('rel_path')}")
+        else:
+            seen_titles[key] = c.get("rel_path")
+    alias_owner = {}
+    for c in courses:
+        for na in c.get("normalized_aliases", []):
+            if na in alias_owner and alias_owner[na] != c.get("course_id"):
+                problems.append(
+                    f"conflicting alias {na!r}: owned by {alias_owner[na]} and {c.get('course_id')}")
+            else:
+                alias_owner[na] = c.get("course_id")
+    for c in courses:
+        sp = root / c.get("rel_path", "") / "state.json"
+        if not sp.exists():
             problems.append(f"missing directory for course {c.get('course_id')}: {c.get('rel_path')}")
-    known_dirs = {c.get("rel_path") for c in registry.get("courses", [])}
+            continue
+        try:
+            st = json.loads(sp.read_text(encoding="utf-8"))
+        except (ValueError, OSError) as exc:
+            problems.append(f"unreadable state.json for course {c.get('course_id')}: {exc}")
+            continue
+        if isinstance(st, dict) and st.get("course_id") != c.get("course_id"):
+            problems.append(
+                f"state/registry identity mismatch for {c.get('rel_path')}: "
+                f"state has {st.get('course_id')!r}, registry has {c.get('course_id')!r}")
+    active = registry.get("active_course_id")
+    if active is not None and all(c.get("course_id") != active for c in courses):
+        problems.append(f"active_course_id {active} references unknown course")
+    known_dirs = {c.get("rel_path") for c in courses}
     for sp in root.rglob("state.json"):
         if ".learnprint" in sp.parts:
             continue
-        rel = sp.parent.relative_to(root).as_posix()
+        try:
+            rel = sp.parent.relative_to(root).as_posix()
+        except ValueError:
+            continue
         if rel not in known_dirs:
             problems.append(f"orphan directory (unregistered): {rel}")
     diag = ledger_diagnose(root / ".learnprint" / "events.jsonl", workspace_root=root)
@@ -1249,6 +1393,17 @@ def cmd_course_validate(a):
         problems.append("ledger missing: events.jsonl absent in initialized workspace")
     for tmp in (root / ".learnprint").glob("*.tmp"):
         problems.append(f"stale temp file: {tmp.name}")
+    return problems
+
+
+def cmd_course_validate(a):
+    root = _courses_root(a)
+    try:
+        registry = registry_read(root)
+    except ValueError as exc:
+        print(f"INVALID\n{exc}")
+        return 2
+    problems = collect_workspace_problems(root, registry)
     if problems and not (a.repair and a.approve):
         print("INVALID\n" + "\n".join(problems))
         return 2
@@ -1262,7 +1417,24 @@ def cmd_course_validate(a):
                     continue
                 rel = sp.parent.relative_to(root).as_posix()
                 if rel not in known:
-                    entry = {"course_id": routing.allocate_course_id(registry),
+                    try:
+                        orphan_state = json.loads(sp.read_text(encoding="utf-8"))
+                    except (ValueError, OSError):
+                        orphan_state = None
+                    orphan_id = (orphan_state.get("course_id")
+                                 if isinstance(orphan_state, dict) else None)
+                    if isinstance(orphan_id, str) and routing.is_course_id(orphan_id):
+                        if any(c.get("course_id") == orphan_id
+                               for c in registry.get("courses", [])):
+                            problems.append(
+                                f"orphan directory identity already registered: {rel} "
+                                "MANUAL INTERVENTION REQUIRED")
+                            known.add(rel)
+                            continue
+                        new_id = orphan_id  # preserve interrupted-create identity
+                    else:
+                        new_id = routing.allocate_course_id(registry)
+                    entry = {"course_id": new_id,
                              "title": sp.parent.name, "normalized_title": routing.normalize_key(sp.parent.name),
                              "slug": sp.parent.name, "category_path": sp.parent.parent.relative_to(root).as_posix(),
                              "rel_path": rel, "aliases": [], "normalized_aliases": [],
