@@ -221,9 +221,9 @@ class TestB3LedgerTerminatorSafety(unittest.TestCase):
                        confirms=None, corrects=None, corroborates=None,
                        grader_source=None)
             with self.assertRaises(mod.LedgerDamage):
-                mod._cmd_record_courses(args, root)
+                mod.cmd_record(args)
             mod.ledger_repair_truncate_partial_tail(lp)
-            self.assertEqual(mod._cmd_record_courses(args, root), 0)
+            self.assertEqual(mod.cmd_record(args), 0)
             recs = mod.ledger_read_trusted(lp, workspace_root=root)
             self.assertEqual([r["event_id"] for r in recs], ["e0", "e1"])
 
