@@ -38,3 +38,23 @@ Notes:
 - Scheduling does not send notifications. The host can integrate a reminder tool if available and explicitly requested.
 - `plan-reviews` operates solely on real logged successful tasks and computes due dates with a default 1/3/7/21-day progression; the teacher adjusts exercises and spacing when performance indicates it.
 - The `profile.json` is not a clinical classification. Founder profile is temporary fallback when local profile remains `unassessed`.
+
+## Courses/ workspace layout (new canonical tree, old my-learning/ still supported)
+
+```text
+Courses/
+  .learnprint/
+    registry.json          # course index: immutable UUID course_id, aliases, paths
+    approval.json          # scoped standing-approval record (revocable)
+    config.json            # tunable policy (retention floor, intervals)
+    learner/profile.json   # personal profile (assessed/provisional/unassessed)
+    events.jsonl           # append-only evidence for ALL courses (fail-closed)
+    events.jsonl.bak.*     # immutable repair backups (never overwritten)
+    recovery-log.jsonl     # auditable repair records with pre/post hashes
+    reviews.json           # derived review queue (stale entries dropped on recompute)
+    .lock                  # advisory lock (persistent, never deleted as recovery)
+  INDEX.md                 # derived dashboard (badges: provisional/learner-confirmed/substantiated)
+  <Category>/<Course>/     # README, SYLLABUS, MAP.mmd, HANDOFF.md, state.json
+```
+
+New evidence records carry UUIDv4 `event_id`, immutable `course_id`, and legacy `topic_id`. Competency states carry a `basis` label (provisional by default). Stored `due_at` values are a write-only cache: status always derives from fresh evidence.

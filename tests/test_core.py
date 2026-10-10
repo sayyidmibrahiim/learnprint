@@ -55,20 +55,32 @@ class TestCore(unittest.TestCase):
         self.assertEqual(r["competencies"][0]["status"],"emerging")
 
     def test_transfer_and_application_qualify_immediate_only(self):
+        import datetime as _dt
         p=mod.load(ROOT/"templates/topic-state.json")
         e=[self._event("independent_application",1,"application"),self._event("novel_transfer",2,"transfer")]
-        r=mod.progress(p,e)
+        now=_dt.datetime.fromisoformat("2026-10-10T02:00:00+07:00")
+        r=mod.progress(p,e,now=now)
         self.assertEqual(r["competencies"][0]["status"],"demonstrated")
         self.assertEqual(r["observed_maintained_percent"],0)
+        # Delayed retrieval counts as retention only after the policy floor
+        # elapses (contract change C5/F4: immediate re-tests are not retention).
         e.append(self._event("delayed_retrieval",3,"concept"))
-        self.assertEqual(mod.progress(p,e)["competencies"][0]["status"],"maintained")
+        e[-1]["date"]="2026-10-11T03:00:00+07:00"
+        now2=_dt.datetime.fromisoformat("2026-10-11T04:00:00+07:00")
+        self.assertEqual(mod.progress(p,e,now=now2)["competencies"][0]["status"],"maintained")
 
-    def test_ai_grade_not_strong_mastery(self):
+    def test_ai_grade_is_provisional_not_verified(self):
+        # Contract change C4/F4: AI-graded observed responses ARE usable
+        # progress, honestly labeled provisional — never filtered out, never
+        # presented as verified mastery. Replaces test_ai_grade_not_strong_mastery.
+        import datetime as _dt
         p=mod.load(ROOT/"templates/topic-state.json")
         e=[self._event("independent_application",1,"application"),self._event("novel_transfer",2,"transfer")]
         e[1]["grader"]="ai_reviewed"
-        r=mod.progress(p,e)
-        self.assertEqual(r["competencies"][0]["status"],"emerging")
+        now=_dt.datetime.fromisoformat("2026-10-10T02:00:00+07:00")
+        r=mod.progress(p,e,now=now)
+        self.assertEqual(r["competencies"][0]["status"],"demonstrated")
+        self.assertEqual(r["competencies"][0]["basis"],"provisional")
 
     def test_synthetic_excluded(self):
         p=mod.load(ROOT/"templates/topic-state.json")
@@ -85,6 +97,7 @@ class TestCore(unittest.TestCase):
         self.assertEqual(due[0]["interval_days"],1)
         self.assertEqual(due[0]["delivery"],"manual; no automatic notification")
         e.append(self._event("delayed_retrieval",3,"concept"))
+        e[-1]["date"]="2026-10-11T03:00:00+07:00"
         self.assertEqual(mod.reviews_from_events([p],e)["reviews"][0]["interval_days"],3)
 
     def test_empty_workspace_init_and_no_overwrite(self):
@@ -110,6 +123,87 @@ class TestCore(unittest.TestCase):
             with self.assertRaises(ValueError):mod.cmd_new_topic(a)
 
     def test_cannot_generate_without_assessment(self):
+        with tempfile.TemporaryDirectory() as d:
+            w=Path(d)/"work"
+            mod.cmd_init(type("Args",(),{"workspace":str(w)})())
+            with self.assertRaises(ValueError): mod.cmd_generate(type("Args",(),{"workspace":str(w),"approve":True})())
+
+    def test_profile_precedence_assessed_over_founder(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            local = Path(d)/"profile.json"
+            prof = mod.load(ROOT/"profiles/founder-default.json")
+            prof["public_template"] = False
+            prof["assessment_status"] = "assessed"
+            mod.dump(local, prof)
+            p, source = mod.resolve_effective_profile(local)
+            self.assertEqual(source, "local")
+            self.assertFalse(p["public_template"])
+
+    def test_profile_precedence_provisional_over_founder(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            local = Path(d)/"profile.json"
+            prof = mod.load(ROOT/"templates/learner-profile-starter.json")
+            prof["assessment_status"] = "provisional"
+            mod.dump(local, prof)
+            p, source = mod.resolve_effective_profile(local)
+            self.assertEqual(source, "local")
+
+    def test_profile_precedence_unassessed_uses_founder_prefs(self):
+        p, source = mod.resolve_effective_profile(ROOT/"templates/learner-profile-starter.json")
+        self.assertTrue(source.startswith("founder_fallback"))
+        self.assertTrue(p["public_template"])
+
+    def test_profile_precedence_missing_uses_founder(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            p, source = mod.resolve_effective_profile(Path(d)/"nope.json")
+            self.assertEqual(source, "founder_fallback_missing")
+            self.assertTrue(p["public_template"])
+
+    def test_profile_precedence_invalid_uses_founder(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            local = Path(d)/"profile.json"
+            local.write_text('{"broken": true}', encoding="utf-8")
+            p, source = mod.resolve_effective_profile(local)
+            self.assertTrue(source.startswith("founder_fallback"))
+            self.assertTrue(p["public_template"])
+
+    def test_personal_skill_optional_for_personalization(self):
+        # Personalization works through direct profile read; no generated
+        # skill needs to exist or be installed (plan Step 2.2, capability 1).
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            local = Path(d)/"profile.json"
+            prof = mod.load(ROOT/"profiles/founder-default.json")
+            prof["public_template"] = False
+            prof["assessment_status"] = "assessed"
+            mod.dump(local, prof)
+            p, source = mod.resolve_effective_profile(local)
+            self.assertEqual(source, "local")
+            self.assertFalse((Path(d)/".agents/skills/learnprint-personal/SKILL.md").exists())
+
+    def test_generated_skill_references_only_profile_and_protocols(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            w=Path(d)/"work"
+            mod.cmd_init(type("Args",(),{"workspace":str(w)})())
+            profile=mod.load(ROOT/"profiles/founder-default.json")
+            profile["public_template"]=False
+            profile["assessment_status"]="assessed"
+            mod.dump(w/"learner/profile.json",profile,overwrite=True)
+            # A distinctive raw learner answer lives in the workspace ledger...
+            marker="zz-unique-learner-answer-9f8c"
+            (w/"events.jsonl").write_text(
+                '{"event_id":"e1","observed_answer":"%s"}\n' % marker, encoding="utf-8")
+            mod.cmd_generate(type("Args",(),{"workspace":str(w),"approve":True})())
+            # ...but must never be copied into the generated skill artifact.
+            skill_dir=w/".agents/skills/learnprint-personal"
+            for f in skill_dir.rglob("*"):
+                if f.is_file() and f.suffix in {".md", ".json"}:
+                    self.assertNotIn(marker, f.read_text(encoding="utf-8"))
         with tempfile.TemporaryDirectory() as d:
             w=Path(d)/"work"
             mod.cmd_init(type("Args",(),{"workspace":str(w)})())

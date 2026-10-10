@@ -32,3 +32,6 @@ The **portable unit** is a skill directory with `SKILL.md`, frontmatter `name` a
 
 ## Claude Cowork plugin-ready bundle
 The source also contains `distribution/claude-plugin/` with `.claude-plugin/plugin.json` and two component skills. A zip of that folder is available as a release attachment for import where custom Claude plugins are supported. The manifest follows the [Anthropic plugin format](https://platform.claude.com/docs/en/manage-claude/plugins-api). This packaging is **not** a verified live installation in Cowork.
+
+## Course workspace hosts (AGENTS.md, Oct 2026 corrections)
+AGENTS.md is canonical and loads natively on OpenCode v2, Codex CLI, Claude Code (built-in mod), Kiro (steering), and Antigravity. Gemini CLI needs GEMINI.md (`@./AGENTS.md` import) unless `context.fileName` is configured — it is the only host needing an adapter. Antigravity loads both files (~40 lines duplication, tolerable; delete GEMINI.md if context is tight). Host compatibility is claimed only after the per-host checklist passes on that host — never from documented discovery paths alone.
