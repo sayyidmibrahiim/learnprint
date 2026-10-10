@@ -27,7 +27,25 @@
 | ChatGPT Desktop / ChatGPT Projects | Upload files or paste [`prompts/`](prompts/) | Native skill installation depends on plan/workspace and product surface |
 | Other AI desktop apps | Paste prompts and attach files | Not a claim of native Skill support |
 
-For project-specific installation: `python scripts/install.py --target opencode --dest /path/to/project` (also `codex`, `claude`, `gemini`, `kiro`, `antigravity`). Preview first with `--dry-run`. Installer never overwrites existing skills; permission/approval is required for writes. Details: [PLATFORMS.md](docs/PLATFORMS.md).
+For project-specific installation: `python scripts/install.py --target opencode --dest /path/to/project` (also `codex`, `claude`, `gemini`, `kiro`, `antigravity`). Preview first with `--dry-run`. Installation never guesses your project path and refuses overwrites.
+
+## Course workspace (no manual navigation)
+
+Open the repo root in any supported host and say `Belajar: <topic>`:
+
+```
+python scripts/learnprint.py course resolve --query "in/on/at"
+python scripts/learnprint.py course create --category languages/english/grammar --title "in on at" --goal "..." --approve
+python scripts/learnprint.py course resume
+python scripts/learnprint.py course dashboard
+```
+
+Courses live in the private gitignored `Courses/` tree (`Courses/Languages/English/Grammar/in-on-at/`), organized by semantic context with parent-scoped validation, immutable course IDs, and append-only evidence. See `rules/WORKSPACE.md` and `rules/COURSE-ROUTING.md`.
+
+## Host notes
+
+- AGENTS.md is the canonical rule file (native on OpenCode, Codex, Claude Code, Kiro, Antigravity). Gemini CLI needs GEMINI.md (one `@./AGENTS.md` import) unless `context.fileName` is configured.
+- Antigravity loads both files: ~40 lines of duplication, tolerable. If context is tight, delete GEMINI.md — Antigravity loads AGENTS.md natively. Compatibility is claimed only after the per-host checklist in the plan passes on that host. The installer never overwrites existing skills; permission/approval is required for writes. Details: [PLATFORMS.md](docs/PLATFORMS.md).
 
 ## Core workflow
 
