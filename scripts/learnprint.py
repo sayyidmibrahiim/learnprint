@@ -138,24 +138,26 @@ def append_event_line(path, line: str, durable: bool = True) -> None:
     Windows the CRT implements O_APPEND as seek-then-write, which loses
     whole same-length records under concurrent handles. Cross-PROCESS
     safety still requires the caller to hold workspace_lock() (advisory);
-    every CLI mutator does.
+    every CLI mutator does. Cross-thread repair safety comes from the
+    repair path re-validating the ledger sha inside this same mutex
+    before mutating (stale diagnose → abort + retry, never truncate).
     """
     path = Path(path)
     payload = (line + "\n").encode("utf-8")
     # O_BINARY (no-op on POSIX): without it Windows translates \n to \r\n,
     # corrupting byte offsets used by ledger diagnostics and repair.
     flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_BINARY", 0)
-    if path.exists():
-        try:
-            existing = path.read_bytes()
-        except OSError:
-            existing = b""
-        if existing.strip() and not existing.endswith(b"\n"):
-            raise LedgerDamage(
-                f"ledger {path}: final record missing terminal newline; "
-                "append refused (would merge two events). "
-                "Run course repair-evidence, then retry.")
     with _APPEND_MUTEX:
+        if path.exists():
+            try:
+                existing = path.read_bytes()
+            except OSError:
+                existing = b""
+            if existing.strip() and not existing.endswith(b"\n"):
+                raise LedgerDamage(
+                    f"ledger {path}: final record missing terminal newline; "
+                    "append refused (would merge two events). "
+                    "Run course repair-evidence, then retry.")
         fd = os.open(str(path), flags, 0o600)
         try:
             _write_all(fd, payload)
@@ -494,15 +496,20 @@ def ledger_repair_truncate_partial_tail(path):
             "manual review required")
     raw = path.read_bytes()
     if missing and not tail and len(missing) == 1:
-        backup_path = _ledger_repair_backup(path, raw)
-        flags = os.O_WRONLY | os.O_APPEND | getattr(os, "O_BINARY", 0)
-        fd = os.open(str(path), flags)
-        try:
-            _write_all(fd, b"\n")
-            os.fsync(fd)
-        finally:
-            os.close(fd)
-        _fsync_dir(path.parent)
+        with _APPEND_MUTEX:
+            fresh = ledger_diagnose(path)
+            if fresh.get("sha256") != report["sha256"]:
+                raise LedgerDamage(
+                    f"ledger {path}: changed during repair; retry the repair")
+            backup_path = _ledger_repair_backup(path, raw)
+            flags = os.O_WRONLY | os.O_APPEND | getattr(os, "O_BINARY", 0)
+            fd = os.open(str(path), flags)
+            try:
+                _write_all(fd, b"\n")
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            _fsync_dir(path.parent)
         repaired = raw + b"\n"
         log = {
             "repaired_at": dt.datetime.now(dt.timezone.utc).isoformat(),
@@ -520,12 +527,17 @@ def ledger_repair_truncate_partial_tail(path):
         return ledger_diagnose(path)
     if tail and not missing and len(tail) == 1:
         cut = tail[0]["byte_offset"]
-        backup_path = _ledger_repair_backup(path, raw)
-        with open(path, "r+b") as fh:
-            fh.truncate(cut)
-            fh.flush()
-            os.fsync(fh.fileno())
-        _fsync_dir(path.parent)
+        with _APPEND_MUTEX:
+            fresh = ledger_diagnose(path)
+            if fresh.get("sha256") != report["sha256"]:
+                raise LedgerDamage(
+                    f"ledger {path}: changed during repair; retry the repair")
+            backup_path = _ledger_repair_backup(path, raw)
+            with open(path, "r+b") as fh:
+                fh.truncate(cut)
+                fh.flush()
+                os.fsync(fh.fileno())
+            _fsync_dir(path.parent)
         log = {
             "repaired_at": dt.datetime.now(dt.timezone.utc).isoformat(),
             "original_sha256": report["sha256"],
@@ -930,7 +942,9 @@ def validate_path(proposed_path, courses_root):
         parent = part_path.parent
         target = part_path.name.lower()
         if parent.exists():
-            existing = {p.name.lower(): p.name for p in parent.iterdir() if p.is_dir()}
+            # Files count too: a file colliding with a category segment
+            # fails loudly at mkdir time without this early refusal.
+            existing = {p.name.lower(): p.name for p in parent.iterdir()}
             if target in existing and existing[target] != part_path.name:
                 return False, f"Case collision: '{part_path.name}' vs existing '{existing[target]}'"
     if len(rel_parts) > 6:
@@ -1013,9 +1027,11 @@ def registry_write(courses_root, registry):
     if cur.exists():
         try:
             prior = cur.read_bytes()
-        except OSError:
-            prior = None
-        if prior is not None and prior != payload:
+        except OSError as exc:
+            raise ValueError(
+                f"registry unreadable, refusing to overwrite: {cur} ({exc}); "
+                "restore from registry.json.bak")
+        if prior != payload:
             atomic_write_bytes(bak, prior)
         elif not bak.exists():
             atomic_write_bytes(bak, payload)
@@ -1195,11 +1211,37 @@ def course_rename(courses_root, course_id, title, update_path=False):
             valid, err = validate_path(rel, root)
             if not valid:
                 raise ValueError(f"invalid rename target path: {err}")
-            os.replace(str(root / entry["rel_path"]), str(root / rel))
+            src = root / entry["rel_path"]
+            dest = root / rel
+            if rel == entry["rel_path"]:
+                pass  # title-only change: no filesystem move needed
+            else:
+                if not src.exists():
+                    # Crash-retry: a previous rename completed the replace but
+                    # lost the registry commit. Adopt the already-moved path
+                    # when its state identity matches this entry.
+                    if _moved_dir_matches(dest, course_id):
+                        entry["slug"] = slug
+                        entry["rel_path"] = rel
+                        registry_write(root, registry)
+                        return entry
+                    raise ValueError(f"rename source missing: {entry['rel_path']}")
+                if dest.exists():
+                    raise ValueError(f"refusing to overwrite existing path: {rel}")
+                os.replace(str(src), str(dest))
             entry["slug"] = slug
             entry["rel_path"] = rel
         registry_write(root, registry)
         return entry
+
+
+def _moved_dir_matches(dest, course_id):
+    """True iff dest holds a state.json whose identity matches course_id."""
+    try:
+        st = json.loads((Path(dest) / "state.json").read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return False
+    return isinstance(st, dict) and st.get("course_id") == course_id
 
 
 def course_move(courses_root, course_id, category_path, confirm_new_segments=()):
@@ -1228,9 +1270,25 @@ def course_move(courses_root, course_id, category_path, confirm_new_segments=())
         for c in registry.get("courses", []):
             if c is not entry and c.get("rel_path") == rel:
                 raise ValueError(f"move target collides: {rel}")
+        src = root / entry["rel_path"]
         dest = root / rel
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(str(root / entry["rel_path"]), str(dest))
+        if rel == entry["rel_path"]:
+            pass  # same-category move: registry metadata already correct
+        else:
+            if not src.exists():
+                # Crash-retry: a previous move completed the replace but lost
+                # the registry commit. Adopt the already-moved directory when
+                # its state identity matches this entry.
+                if _moved_dir_matches(dest, course_id):
+                    entry["category_path"] = resolved_path
+                    entry["rel_path"] = rel
+                    registry_write(root, registry)
+                    return entry
+                raise ValueError(f"move source missing: {entry['rel_path']}")
+            if dest.exists():
+                raise ValueError(f"refusing to overwrite existing path: {rel}")
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(str(src), str(dest))
         entry["category_path"] = resolved_path
         entry["rel_path"] = rel
         registry_write(root, registry)
@@ -1542,9 +1600,31 @@ def cmd_course_validate(a):
                         new_id = orphan_id  # preserve interrupted-create identity
                     else:
                         new_id = routing.allocate_course_id(registry)
+                    title = sp.parent.name
+                    norm_title = routing.normalize_key(title)
+                    try:
+                        category = sp.parent.parent.relative_to(root).as_posix()
+                    except ValueError:
+                        fixed_notes.append(
+                            f"orphan directory outside workspace tree: {rel} "
+                            "MANUAL INTERVENTION REQUIRED")
+                        known.add(rel)
+                        continue
+                    clash = next(
+                        (c for c in registry.get("courses", [])
+                         if c.get("category_path") == category
+                         and c.get("normalized_title") == norm_title),
+                        None)
+                    if clash is not None:
+                        fixed_notes.append(
+                            f"orphan directory title collides with registered course "
+                            f"{clash.get('course_id')}: {rel} "
+                            "MANUAL INTERVENTION REQUIRED")
+                        known.add(rel)
+                        continue
                     entry = {"course_id": new_id,
-                             "title": sp.parent.name, "normalized_title": routing.normalize_key(sp.parent.name),
-                             "slug": sp.parent.name, "category_path": sp.parent.parent.relative_to(root).as_posix(),
+                             "title": title, "normalized_title": norm_title,
+                             "slug": sp.parent.name, "category_path": category,
                              "rel_path": rel, "aliases": [], "normalized_aliases": [],
                              "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
                              "last_activity": None, "classification_source": "imported",

@@ -604,6 +604,145 @@ class TestDWindowsPaths(unittest.TestCase):
             self.assertEqual({r["event_id"] for r in recs}, {"conc-0", "conc-1"})
 
 
+class TestReviewFindings(unittest.TestCase):
+    def test_move_crash_retry_converges(self):
+        """Interrupted move AFTER os.replace but BEFORE registry commit:
+        retry must converge (adopt the already-moved directory)."""
+        import tempfile, shutil
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(d)
+            c = mod.course_create(**create_kwargs(root))
+            cid = c["course_id"]
+            src = root / c["rel_path"]
+            dst = root / "languages/english/development/in-on-at"
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(src), str(dst))  # simulate completed replace, lost commit
+            moved = mod.course_move(root, cid, "languages/english/development",
+                                    ("development",))
+            self.assertEqual(moved["rel_path"], "languages/english/development/in-on-at")
+            st = json.loads((dst / "state.json").read_text(encoding="utf-8"))
+            self.assertEqual(st["course_id"], cid)
+
+    def test_move_refuses_stray_file_at_dest(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(d)
+            c = mod.course_create(**create_kwargs(root))
+            block = root / "languages/english/development"
+            block.mkdir(parents=True)
+            planted = block / "in-on-at"
+            planted.write_text("stray user file", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                mod.course_move(root, c["course_id"], "languages/english/development",
+                                ("development",))
+            self.assertEqual(planted.read_text(encoding="utf-8"), "stray user file")
+
+    def test_registry_write_unreadable_prior_raises(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(d)
+            cur = root / ".learnprint" / "registry.json"
+            raw = cur.read_bytes()
+            cur.unlink()
+            cur.mkdir()  # directory in place of the file: read_bytes -> OSError
+            try:
+                with self.assertRaises(ValueError):
+                    mod.registry_write(root, {"schema_version": "1.0", "courses": [],
+                                              "active_course_id": None})
+            finally:
+                import shutil as _sh
+                _sh.rmtree(cur, ignore_errors=True)
+                cur.write_bytes(raw)
+
+    def test_repair_skips_colliding_orphan(self):
+        import tempfile, io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(d)
+            mod.course_create(**create_kwargs(root, "languages/english/grammar", "in on at"))
+            # Orphan dir whose DERIVED title normalizes to the registered
+            # course title in the same category: adopting it would create a
+            # duplicate-title pair.
+            dup = root / "languages/english/grammar" / "IN ON AT"
+            dup.mkdir(parents=True)
+            (dup / "state.json").write_text(json.dumps(
+                {"schema_version": "1.0", "course_id": None, "goal": "g",
+                 "learning_scope": [], "sources": []}), encoding="utf-8")
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                rc = mod.cmd_course_validate(
+                    _ns(repair=True, approve=True, courses_root=str(root)))
+            self.assertEqual(rc, 2)
+            self.assertIn("MANUAL", buf.getvalue())
+            reg = mod.registry_read(root)
+            self.assertEqual(len(reg["courses"]), 1)
+
+    def test_case_walk_sees_files(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "Grammar").write_text("file, not dir", encoding="utf-8")
+            valid, err = mod.validate_path("grammar", Path(d))
+            self.assertFalse(valid)
+            self.assertTrue(err)
+
+    def test_repair_append_race_loses_nothing(self):
+        """Repair racing same-process appends: the mutex serializes
+        diagnose + mutate against appends, so appended records are never
+        truncated away. Retry loops are bounded; no sleeps."""
+        import tempfile, threading
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(d)
+            lp = root / ".learnprint" / "events.jsonl"
+            mod.append_event_line(lp, json.dumps(valid_event("seed")))
+            with open(lp, "ab") as fh:
+                fh.write(b'{"broken": tru')
+            errors = []
+
+            def appender():
+                try:
+                    for i in range(5):
+                        for _ in range(500):
+                            try:
+                                mod.append_event_line(lp, json.dumps(valid_event(f"race-{i}")))
+                                break
+                            except mod.LedgerDamage:
+                                continue
+                        else:
+                            raise AssertionError(f"append race-{i} never landed")
+                except Exception as exc:  # noqa: BLE001 — asserted empty
+                    errors.append(exc)
+
+            def repairer():
+                try:
+                    for _ in range(500):
+                        try:
+                            rep = mod.ledger_repair_truncate_partial_tail(lp)
+                        except mod.LedgerDamage:
+                            continue
+                        if rep["status"] == "ok":
+                            try:
+                                mod.ledger_read_trusted(lp, workspace_root=root)
+                                return
+                            except mod.LedgerDamage:
+                                continue
+                    raise AssertionError("ledger never converged to ok")
+                except Exception as exc:  # noqa: BLE001 — asserted empty
+                    errors.append(exc)
+
+            threads = [threading.Thread(target=appender),
+                       threading.Thread(target=repairer)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=120)
+            self.assertEqual(errors, [])
+            recs = mod.ledger_read_trusted(lp, workspace_root=root)
+            ids = {r["event_id"] for r in recs}
+            self.assertIn("seed", ids)
+            for i in range(5):
+                self.assertIn(f"race-{i}", ids)
+
+
 class TestEWorkspaceAcceptance(unittest.TestCase):
     def test_readonly_ops_do_not_create_workspace(self):
         import tempfile, io
