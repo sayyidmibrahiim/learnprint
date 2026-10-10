@@ -1041,6 +1041,287 @@ def course_move(courses_root, course_id, category_path, confirm_new_segments=())
         return entry
 
 
+def _courses_root(args):
+    """Resolve --courses-root (default: Courses/ under the git root)."""
+    if getattr(args, "courses_root", None):
+        return Path(args.courses_root).expanduser()
+    cwd = Path.cwd()
+    for parent in [cwd, *cwd.parents]:
+        if (parent / ".git").exists():
+            return parent / "Courses"
+    return cwd / "Courses"
+
+
+def _require(args, root, scope_token):
+    """Per-call --approve flag PLUS live standing approval (plan Step 3.0a)."""
+    if not getattr(args, "approve", False):
+        raise ValueError("Explicit approval required: --approve")
+    ap = read_approval(root)
+    if not approval_allows(ap, scope_token):
+        raise ValueError(
+            "Standing approval missing, revoked, or out of scope for "
+            f"{scope_token}; ask the user in chat, then run course init --approve")
+
+
+def _course_topics(root, registry):
+    """Build progress-compatible topic dicts from course state.json files."""
+    topics = []
+    for c in registry.get("courses", []):
+        sp = root / c.get("rel_path", "") / "state.json"
+        try:
+            st = json.loads(sp.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            continue
+        topics.append({
+            "schema_version": "1.0",
+            "topic_id": c.get("topic_id") or c.get("course_id"),
+            "course_id": c.get("course_id"),
+            "goal": c.get("goal", ""),
+            "learning_scope": st.get("learning_scope", []),
+            "syllabus": [], "question_parking_lot": [],
+            "sources": st.get("sources", []), "last_session": None,
+        })
+    return topics
+
+
+def cmd_course_init(a):
+    root = _courses_root(a)
+    if not getattr(a, "approve", False):
+        raise ValueError("Explicit approval required: --approve")
+    lp = root / ".learnprint"
+    if (lp / "registry.json").exists():
+        raise ValueError(f"Workspace already initialized: {root}")
+    lp.mkdir(parents=True, exist_ok=True)
+    (lp / "learner").mkdir(exist_ok=True)
+    shutil.copyfile(ROOT / "templates/course-registry.json", lp / "registry.json")
+    shutil.copyfile(ROOT / "templates/learner-profile-starter.json", lp / "learner/profile.json")
+    shutil.copyfile(ROOT / "templates/review-queue.json", lp / "reviews.json")
+    (lp / "config.json").write_text(json.dumps(
+        {"min_elapsed_hours": RETENTION_POLICY["min_elapsed_hours"],
+         "intervals_days": list(RETENTION_POLICY["intervals_days"])},
+        ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    (lp / "events.jsonl").write_text("", encoding="utf-8")
+    (root / "HANDOFF.md").write_text(
+        "# Learnprint handoff\n\nWorkspace initialized. No courses yet.\n", encoding="utf-8")
+    rec = write_approval(root)
+    print(f"CREATED Courses workspace: {root}")
+    print(f"Standing approval recorded (scope: {', '.join(rec['scope'])})")
+    return 0
+
+
+def cmd_course_resolve(a):
+    root = _courses_root(a)
+    print(json.dumps(course_resolve(root, a.query), ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_course_create(a):
+    root = _courses_root(a)
+    _require(a, root, "course-create")
+    entry = course_create(root, a.category, a.title, a.goal, aliases=a.alias or [],
+                          confirm_new_segments=a.confirm_new_segment or [],
+                          classification_source="agent")
+    with workspace_lock(root):
+        registry = registry_read(root)
+        registry["active_course_id"] = entry["course_id"]
+        registry_write(root, registry)
+    print(json.dumps(entry, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_course_rename(a):
+    root = _courses_root(a)
+    _require(a, root, "course-create")
+    entry = course_rename(root, a.course_id, a.title, update_path=a.update_path)
+    print(json.dumps(entry, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_course_move(a):
+    root = _courses_root(a)
+    _require(a, root, "course-create")
+    entry = course_move(root, a.course_id, a.category,
+                        confirm_new_segments=a.confirm_new_segment or [])
+    print(json.dumps(entry, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_course_list(a):
+    root = _courses_root(a)
+    registry = registry_read(root)
+    out = [{"course_id": c["course_id"], "title": c.get("title"),
+            "category_path": c.get("category_path"), "rel_path": c.get("rel_path")}
+           for c in registry.get("courses", [])]
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_course_dashboard(a):
+    root = _courses_root(a)
+    _require(a, root, "dashboard-write")
+    with workspace_lock(root):
+        registry = registry_read(root)
+        ledger = ledger_read_trusted(root / ".learnprint" / "events.jsonl", workspace_root=root)
+        policy = load_retention_policy(root)
+        now = dt.datetime.now(dt.timezone.utc)
+        stored = {}
+        rp = root / ".learnprint" / "reviews.json"
+        if rp.exists():
+            try:
+                stored = json.loads(rp.read_text(encoding="utf-8"))
+            except ValueError:
+                stored = {}
+        due_by_comp = {}
+        for r in stored.get("reviews", []):
+            due_by_comp.setdefault(r.get("competency_id"), r.get("due_at"))
+        lines = ["# Learnprint Courses", ""]
+        for c in registry.get("courses", []):
+            topics = _course_topics(root, {"courses": [c]})
+            if not topics or not topics[0]["learning_scope"]:
+                badge, counts = "[no-evidence]", {}
+            else:
+                res = progress(topics[0], ledger, now=now, policy=policy, registry=registry)
+                counts = {}
+                for comp in res["competencies"]:
+                    counts[comp["status"]] = counts.get(comp["status"], 0) + 1
+                bases = {comp["basis"] for comp in res["competencies"]}
+                badge = ("[substantiated]" if "substantiated" in bases
+                         else "[learner-confirmed]" if "learner_confirmed" in bases
+                         else "[provisional]")
+            lines.append(f"## {badge} {c.get('title')} (`{c.get('rel_path')}`)")
+            if counts:
+                lines.append("- " + ", ".join(f"{k}: {v}" for k, v in sorted(counts.items())))
+            lines.append("")
+        due_all = reviews_from_events(_course_topics(root, registry), ledger,
+                                     stored_reviews=stored if stored else None)["reviews"]
+        if due_all:
+            lines.append("## Due reviews")
+            for r in due_all:
+                lines.append(f"- {r['competency_id']}: due {r['due_at']} [{r['basis']}]")
+            lines.append("")
+        atomic_write(root / "INDEX.md", "\n".join(lines) + "\n")
+    print(f"DASHBOARD regenerated: {root / 'INDEX.md'}")
+    return 0
+
+
+def cmd_course_resume(a):
+    root = _courses_root(a)
+    registry = registry_read(root)
+    courses = registry.get("courses", [])
+    if not courses:
+        print(json.dumps({"status": "none", "note": "no courses yet; start a new one"}))
+        return 0
+    active = registry.get("active_course_id")
+    hit = next((c for c in courses if c.get("course_id") == active), None)
+    if hit is not None:
+        print(json.dumps({"status": "found", "course": hit}, ensure_ascii=False, indent=2))
+        return 0
+    dated = sorted([c for c in courses if c.get("last_activity")],
+                   key=lambda c: c["last_activity"], reverse=True)
+    if dated and (len(dated) == 1 or dated[0]["last_activity"] != dated[1]["last_activity"]):
+        print(json.dumps({"status": "found", "course": dated[0]}, ensure_ascii=False, indent=2))
+        return 0
+    cands = [{"course_id": c["course_id"], "title": c.get("title"),
+              "category_path": c.get("category_path")} for c in courses]
+    print(json.dumps({"status": "ambiguous", "candidates": cands,
+                      "note": "ask the user which course to resume"}, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_course_validate(a):
+    root = _courses_root(a)
+    registry = registry_read(root)
+    problems = []
+    for c in registry.get("courses", []):
+        if not (root / c.get("rel_path", "") / "state.json").exists():
+            problems.append(f"missing directory for course {c.get('course_id')}: {c.get('rel_path')}")
+    known_dirs = {c.get("rel_path") for c in registry.get("courses", [])}
+    for sp in root.rglob("state.json"):
+        if ".learnprint" in sp.parts:
+            continue
+        rel = sp.parent.relative_to(root).as_posix()
+        if rel not in known_dirs:
+            problems.append(f"orphan directory (unregistered): {rel}")
+    diag = ledger_diagnose(root / ".learnprint" / "events.jsonl", workspace_root=root)
+    if diag["status"] == "damaged":
+        problems.append(f"ledger damaged: {len(diag['damage'])} record(s)")
+    if diag.get("absent_kind") == "missing-expected":
+        problems.append("ledger missing: events.jsonl absent in initialized workspace")
+    for tmp in (root / ".learnprint").glob("*.tmp"):
+        problems.append(f"stale temp file: {tmp.name}")
+    if problems and not (a.repair and a.approve):
+        print("INVALID\n" + "\n".join(problems))
+        return 2
+    if a.repair:
+        _require(a, root, "state-update")
+        with workspace_lock(root):
+            registry = registry_read(root)
+            known = {c.get("rel_path") for c in registry.get("courses", [])}
+            for sp in root.rglob("state.json"):
+                if ".learnprint" in sp.parts:
+                    continue
+                rel = sp.parent.relative_to(root).as_posix()
+                if rel not in known:
+                    entry = {"course_id": routing.allocate_course_id(registry),
+                             "title": sp.parent.name, "normalized_title": routing.normalize_key(sp.parent.name),
+                             "slug": sp.parent.name, "category_path": sp.parent.parent.relative_to(root).as_posix(),
+                             "rel_path": rel, "aliases": [], "normalized_aliases": [],
+                             "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                             "last_activity": None, "classification_source": "imported",
+                             "goal": "", "topic_id": None}
+                    registry.setdefault("courses", []).append(entry)
+                    problems.append(f"adopted orphan directory: {rel}")
+                    known.add(rel)
+            for tmp in (root / ".learnprint").glob("*.tmp"):
+                tmp.unlink()
+                problems.append(f"removed stale temp file: {tmp.name}")
+            registry_write(root, registry)
+    print("VALID" if not problems else "REPAIRED\n" + "\n".join(problems))
+    return 0
+
+
+def cmd_course_repair_evidence(a):
+    root = _courses_root(a)
+    _require(a, root, "event-append")
+    with workspace_lock(root):
+        report = ledger_repair_truncate_partial_tail(root / ".learnprint" / "events.jsonl")
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_course_revoke_approval(a):
+    root = _courses_root(a)
+    revoke_approval(root)
+    print("Standing approval revoked. Mutating commands will refuse until a new grant.")
+    return 0
+
+
+def cmd_course_plan_reviews(a):
+    root = _courses_root(a)
+    _require(a, root, "state-update")
+    with workspace_lock(root):
+        registry = registry_read(root)
+        ledger = ledger_read_trusted(root / ".learnprint" / "events.jsonl", workspace_root=root)
+        topics = _course_topics(root, registry)
+        for t in topics:
+            errs = validate_topic(t)
+            if errs:
+                raise ValueError(f"invalid course state: {errs}")
+        rp = root / ".learnprint" / "reviews.json"
+        stored = {}
+        if rp.exists():
+            try:
+                stored = json.loads(rp.read_text(encoding="utf-8"))
+            except ValueError:
+                stored = {}
+        result = reviews_from_events(topics, ledger, stored_reviews=stored or None)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        if a.dry_run:
+            return 0
+        atomic_write(rp, json.dumps(result, ensure_ascii=False, indent=2) + "\n")
+    return 0
+
+
 def cmd_validate(a):
     p=load(a.profile)
     err=validate_profile(p)
@@ -1222,6 +1503,9 @@ def cmd_report(a):
 def cmd_record(a):
     w=Path(a.workspace).expanduser().resolve()
     p=w/"events.jsonl"
+    courses_mode = not (w/"manifest.json").exists() and (w/".learnprint"/"registry.json").exists()
+    if courses_mode:
+        return _cmd_record_courses(a, w)
     if not (w/"manifest.json").exists(): raise ValueError("Initialize workspace first")
     if not a.approve: raise ValueError("Explicit write approval required: --approve")
     rubric=json.loads(a.rubric)
@@ -1238,6 +1522,61 @@ def cmd_record(a):
     if e["event_id"] in {x.get("event_id") for x in existing}:
         raise ValueError("Duplicate event_id")
     append_event_line(p, json.dumps(e, ensure_ascii=False))
+    print(f"RECORDED: {a.event_id}; grading supplied by {a.grader}, NOT independently verified by script")
+    return 0
+
+
+def _cmd_record_courses(a, w):
+    """Record into a Courses/ workspace ledger (fail closed, under lock)."""
+    root = w
+    if not getattr(a, "approve", False):
+        raise ValueError("Explicit write approval required: --approve")
+    ap = read_approval(root)
+    if not approval_allows(ap, "event-append"):
+        raise ValueError("Standing approval missing, revoked, or out of scope for event-append")
+    lp = root / ".learnprint"
+    with workspace_lock(root):
+        registry = registry_read(root)
+        course_id = getattr(a, "course_id", None)
+        if course_id:
+            entry = next((c for c in registry.get("courses", [])
+                          if c.get("course_id") == course_id), None)
+            if entry is None:
+                raise ValueError(f"unknown course_id: {course_id}")
+            topic_id = a.topic or course_id
+        else:
+            topic_id = a.topic
+        rubric = json.loads(a.rubric)
+        e = {"event_id": a.event_id,
+             "date": dt.datetime.now(dt.timezone.utc).isoformat(),
+             "topic_id": topic_id,
+             "competency_id": a.competency, "task_type": a.task_type,
+             "expected_reasoning": a.expected, "observed_answer": a.answer,
+             "rubric": rubric, "help_level": a.help, "feedback": a.feedback,
+             "grader": a.grader, "evidence_origin": "observed_response",
+             "confidence_self_report": a.confidence, "is_synthetic_example": False}
+        if course_id:
+            e["course_id"] = course_id
+        for link, val in (("confirms_event_id", getattr(a, "confirms", None)),
+                          ("corrects_event_id", getattr(a, "corrects", None)),
+                          ("corroborates_event_id", getattr(a, "corroborates", None))):
+            if val:
+                e[link] = val
+        if getattr(a, "grader_source", None):
+            e["grader_source"] = a.grader_source
+        errs = validate_event(e)
+        if errs:
+            raise ValueError("Invalid event: " + "; ".join(errs))
+        existing = ledger_read_trusted(lp / "events.jsonl", workspace_root=root)
+        if e["event_id"] in {x.get("event_id") for x in existing}:
+            raise ValueError("Duplicate event_id")
+        append_event_line(lp / "events.jsonl", json.dumps(e, ensure_ascii=False))
+        if course_id:
+            for c in registry.get("courses", []):
+                if c.get("course_id") == course_id:
+                    c["last_activity"] = e["date"]
+            registry["active_course_id"] = course_id
+            registry_write(root, registry)
     print(f"RECORDED: {a.event_id}; grading supplied by {a.grader}, NOT independently verified by script")
     return 0
 
@@ -1261,6 +1600,46 @@ def main():
     rec.add_argument("--grader",choices=["ai_reviewed","human_reviewed","not_graded"],default="not_graded")
     rec.add_argument("--help-level",dest="help",choices=sorted(HELP),default="none")
     rec.add_argument("--confidence",type=int);rec.add_argument("--approve",action="store_true");rec.set_defaults(func=cmd_record)
+    rec.add_argument("--course-id",default=None)
+    rec.add_argument("--grader-source",choices=sorted(GRADER_SOURCES),default=None)
+    rec.add_argument("--confirms",default=None);rec.add_argument("--corrects",default=None)
+    rec.add_argument("--corroborates",default=None)
+
+    course=sub.add_parser("course")
+    cs=course.add_subparsers(dest="course_cmd",required=True)
+    ci=cs.add_parser("init");ci.add_argument("--approve",action="store_true")
+    ci.add_argument("--courses-root");ci.set_defaults(func=cmd_course_init)
+    cr=cs.add_parser("resolve");cr.add_argument("--query",required=True)
+    cr.add_argument("--courses-root");cr.set_defaults(func=cmd_course_resolve)
+    cc=cs.add_parser("create");cc.add_argument("--category",required=True)
+    cc.add_argument("--title",required=True);cc.add_argument("--goal",required=True)
+    cc.add_argument("--alias",action="append",default=[])
+    cc.add_argument("--confirm-new-segment",action="append",default=[])
+    cc.add_argument("--approve",action="store_true");cc.add_argument("--courses-root")
+    cc.set_defaults(func=cmd_course_create)
+    rn=cs.add_parser("rename");rn.add_argument("--course-id",required=True)
+    rn.add_argument("--title",required=True);rn.add_argument("--update-path",action="store_true")
+    rn.add_argument("--approve",action="store_true");rn.add_argument("--courses-root")
+    rn.set_defaults(func=cmd_course_rename)
+    mv=cs.add_parser("move");mv.add_argument("--course-id",required=True)
+    mv.add_argument("--category",required=True)
+    mv.add_argument("--confirm-new-segment",action="append",default=[])
+    mv.add_argument("--approve",action="store_true");mv.add_argument("--courses-root")
+    mv.set_defaults(func=cmd_course_move)
+    cl=cs.add_parser("list");cl.add_argument("--courses-root");cl.set_defaults(func=cmd_course_list)
+    db=cs.add_parser("dashboard");db.add_argument("--approve",action="store_true")
+    db.add_argument("--courses-root");db.set_defaults(func=cmd_course_dashboard)
+    rs=cs.add_parser("resume");rs.add_argument("--courses-root");rs.set_defaults(func=cmd_course_resume)
+    cv=cs.add_parser("validate");cv.add_argument("--repair",action="store_true")
+    cv.add_argument("--approve",action="store_true");cv.add_argument("--courses-root")
+    cv.set_defaults(func=cmd_course_validate)
+    re_=cs.add_parser("repair-evidence");re_.add_argument("--approve",action="store_true")
+    re_.add_argument("--courses-root");re_.set_defaults(func=cmd_course_repair_evidence)
+    ra=cs.add_parser("revoke-approval");ra.add_argument("--courses-root")
+    ra.set_defaults(func=cmd_course_revoke_approval)
+    pr=cs.add_parser("plan-reviews");pr.add_argument("--approve",action="store_true")
+    pr.add_argument("--dry-run",action="store_true");pr.add_argument("--courses-root")
+    pr.set_defaults(func=cmd_course_plan_reviews)
     a=p.parse_args()
     try: return a.func(a)
     except (OSError,ValueError,KeyError,TypeError,json.JSONDecodeError) as e:
