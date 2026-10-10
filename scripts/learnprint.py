@@ -1384,10 +1384,17 @@ def cmd_course_dashboard(a):
             lines.append("")
         due_all = reviews_from_events(_course_topics(root, registry), ledger,
                                      stored_reviews=stored if stored else None)["reviews"]
-        if due_all:
-            lines.append("## Due reviews")
-            for r in due_all:
+        due_now = [r for r in due_all if _parse_dt(r["due_at"]) <= now]
+        scheduled = [r for r in due_all if _parse_dt(r["due_at"]) > now]
+        if due_now:
+            lines.append("## Due now")
+            for r in due_now:
                 lines.append(f"- {r['competency_id']}: due {r['due_at']} [{r['basis']}]")
+            lines.append("")
+        if scheduled:
+            lines.append("## Scheduled reviews")
+            for r in scheduled:
+                lines.append(f"- {r['competency_id']}: scheduled {r['due_at']} [{r['basis']}]")
             lines.append("")
         atomic_write(root / "INDEX.md", "\n".join(lines) + "\n")
     print(f"DASHBOARD regenerated: {root / 'INDEX.md'}")

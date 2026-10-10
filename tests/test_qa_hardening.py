@@ -567,8 +567,6 @@ class TestDWindowsPaths(unittest.TestCase):
             self.assertEqual(len(set(ids)), 20)
 
     def test_concurrent_cli_records_both_land(self):
-        """Two separate OS processes recording at once: the advisory
-        workspace lock serializes them — no lost events, no duplicates."""
         import tempfile, threading
         with tempfile.TemporaryDirectory() as d:
             root = str(Path(d) / "Courses")
@@ -604,6 +602,57 @@ class TestDWindowsPaths(unittest.TestCase):
             lp = Path(root) / ".learnprint" / "events.jsonl"
             recs = mod.ledger_read_trusted(lp, workspace_root=Path(root))
             self.assertEqual({r["event_id"] for r in recs}, {"conc-0", "conc-1"})
+
+
+class TestEWorkspaceAcceptance(unittest.TestCase):
+    def test_readonly_ops_do_not_create_workspace(self):
+        import tempfile, io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as d:
+            ghost = str(Path(d) / "NoCourses")
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                mod.cmd_course_resolve(_ns(query="in on at", courses_root=ghost))
+            self.assertFalse(Path(ghost).exists())
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                mod.cmd_course_list(_ns(courses_root=ghost))
+            self.assertFalse(Path(ghost).exists())
+
+    def test_dashboard_separates_due_now_from_scheduled(self):
+        import tempfile
+        import datetime as dt
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(d)
+            entry = mod.course_create(**create_kwargs(root))
+            cid = entry["course_id"]
+            sp = root / entry["rel_path"] / "state.json"
+            st = json.loads(sp.read_text(encoding="utf-8"))
+            st["learning_scope"] = [
+                {"id": "c1", "name": "C1", "status": "unknown",
+                 "evidence_ids": [], "due_at": None}]
+            sp.write_text(json.dumps(st) + "\n", encoding="utf-8")
+            now = dt.datetime.now(dt.timezone.utc)
+            base = {"date": now.isoformat(), "topic_id": cid, "competency_id": "c1",
+                    "observed_answer": "a", "expected_reasoning": "r",
+                    "help_level": "none", "feedback": "f", "grader": "ai_reviewed",
+                    "evidence_origin": "observed_response", "course_id": cid}
+            mod.append_event_line(
+                root / ".learnprint" / "events.jsonl",
+                json.dumps({**base, "event_id": "a1",
+                            "task_type": "independent_application",
+                            "rubric": {"application": 2}}))
+            mod.append_event_line(
+                root / ".learnprint" / "events.jsonl",
+                json.dumps({**base, "event_id": "t1",
+                            "task_type": "novel_transfer",
+                            "rubric": {"transfer": 2}}))
+            mod.cmd_course_dashboard(_ns(approve=True, courses_root=str(root)))
+            index = (root / "INDEX.md").read_text(encoding="utf-8")
+            # Fresh demonstration: review is scheduled ~1 day out, NOT due.
+            self.assertIn("Scheduled", index)
+            due_section = index.split("Scheduled")[0]
+            self.assertNotIn("c1: due", due_section)
 
 
 if __name__ == "__main__":
