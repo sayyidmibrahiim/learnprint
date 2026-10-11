@@ -311,8 +311,8 @@ class TestHotfixInitAndLedgerValidation(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = make_workspace(d)
             lp = root / ".learnprint"
-            original_ledger = b'{"existing":"learner-evidence-canary"}\\n'
-            original_profile = b'{"existing":"learner-profile-canary"}\\n'
+            original_ledger = b'{"existing":"learner-evidence-canary"}\n'
+            original_profile = b'{"existing":"learner-profile-canary"}\n'
             (lp / "events.jsonl").write_bytes(original_ledger)
             (lp / "learner" / "profile.json").write_bytes(original_profile)
             (lp / "registry.json").unlink()
@@ -329,7 +329,7 @@ class TestHotfixInitAndLedgerValidation(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = make_workspace(d)
             ledger = root / ".learnprint" / "events.jsonl"
-            original = b'{"not_an_event": true}\\n'
+            original = b'{"not_an_event": true}\n'
             ledger.write_bytes(original)
             result = _cli("course", "validate", "--courses-root", str(root))
             self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
