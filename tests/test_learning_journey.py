@@ -122,6 +122,43 @@ class TestLearnerJourney(unittest.TestCase):
                         "--course-id", c["course_id"])["units"]][:2],
                              ["prerequisite", "db-basics"])
 
+    def test_legacy_syllabus_preview_and_malformed_plan_fail_closed(self):
+        with tempfile.TemporaryDirectory() as d:
+            root, c = self.setup_course(d)
+            legacy = root / c["rel_path"] / "SYLLABUS.md"
+            legacy.write_text("# SQL Sprint\n\n1. Engines\n2. JOINs\n", encoding="utf-8")
+            first = success("course", "plan", "--courses-root", root,
+                            "--course-id", c["course_id"])
+            self.assertEqual(first["syllabus_status"], "needs_adoption")
+            self.assertIn("JOINs", first["legacy_syllabus_preview"])
+            state_path = root / c["rel_path"] / "state.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["syllabus"] = [
+                {"unit_id": "broken", "title": "Bad loop", "outcome": "X",
+                 "competency_ids": ["db"], "requires": ["broken"],
+                 "hands_on": "Do something", "success_check": "Observe X",
+                 "practice_mode": "simulation"}]
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            rejected = run("course", "validate", "--courses-root", root)
+            self.assertEqual(rejected.returncode, 2)
+            self.assertIn("INVALID", rejected.stdout)
+            self.assertNotEqual(run("course", "plan", "--courses-root", root,
+                                    "--course-id", c["course_id"]).returncode, 0)
+            self.assertIn("JOINs", legacy.read_text(encoding="utf-8"))
+
+    def test_first_party_skill_and_new_commands_reference_journey(self):
+        for path in [ROOT / "skills/learnprint/references/JOURNEY.md",
+                     ROOT / ".agents/skills/learnprint/references/JOURNEY.md",
+                     ROOT / ".opencode/commands/learnprint-syllabus.md",
+                     ROOT / ".opencode/commands/learnprint-practice.md"]:
+            self.assertTrue(path.is_file(), str(path))
+        self.assertEqual(
+            (ROOT / "skills/learnprint/references/JOURNEY.md").read_bytes(),
+            (ROOT / ".agents/skills/learnprint/references/JOURNEY.md").read_bytes())
+        self.assertIn("JOURNEY.md",
+            (ROOT / "skills/learnprint/SKILL.md").read_text(encoding="utf-8"))
+
+
     def test_read_only_plan_does_not_create_workspace(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d) / "Courses"
