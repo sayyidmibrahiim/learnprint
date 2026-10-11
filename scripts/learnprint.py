@@ -349,6 +349,8 @@ LOCK_TABLE = {
     "course plan": {"mutates": False, "locks": False},
     "course plan-set": {"mutates": True, "locks": True},
     "course lesson-log": {"mutates": True, "locks": True},
+    "course session-start": {"mutates": True, "locks": True},
+    "course method-audit": {"mutates": False, "locks": False},
     "report": {"mutates": False, "locks": False},
 }
 
