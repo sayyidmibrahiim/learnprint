@@ -1323,10 +1323,8 @@ def _course_topics(root, registry):
     topics = []
     for c in registry.get("courses", []):
         sp = root / c.get("rel_path", "") / "state.json"
-        try:
-            st = json.loads(sp.read_text(encoding="utf-8"))
-        except (ValueError, OSError):
-            continue
+        st = load(sp)
+        _validated_course_scope(st, c["course_id"], sp)
         topics.append({
             "schema_version": "1.0",
             "topic_id": c.get("topic_id") or c.get("course_id"),
@@ -1799,10 +1797,10 @@ def collect_workspace_problems(root, registry):
         except (ValueError, OSError) as exc:
             problems.append(f"unreadable state.json for course {c.get('course_id')}: {exc}")
             continue
-        if isinstance(st, dict) and st.get("course_id") != c.get("course_id"):
-            problems.append(
-                f"state/registry identity mismatch for {c.get('rel_path')}: "
-                f"state has {st.get('course_id')!r}, registry has {c.get('course_id')!r}")
+        try:
+            _validated_course_scope(st, c.get("course_id"), sp)
+        except (ValueError, TypeError) as exc:
+            problems.append(f"invalid course state for {c.get('rel_path')}: {exc}")
     active = registry.get("active_course_id")
     if active is not None and all(c.get("course_id") != active for c in courses):
         problems.append(f"active_course_id {active} references unknown course")
