@@ -4,6 +4,14 @@ This is the normative Learnprint teaching flow (host-agnostic). Follow it for
 every new/resumed course, regardless of AI provider, installed global rules,
 or model. Answer in the learner's language.
 
+## Learner-facing delivery
+
+Before showing method, roadmap, teaching, practice, progress, or audit,
+read the project-local `references/PRESENTATION.md` next to this file.
+Use its plain-language, one-useful-visual, one-next-action and consent
+rules. This improves the host response only; never alter CLI evidence,
+raw scores, method receipts or course data to make output look better.
+
 ## 0. Confirm the actual effective method
 Run "python scripts/learnprint.py learner method" before teaching and after
 any personal reassessment. Read ALL instruction_defaults and display:

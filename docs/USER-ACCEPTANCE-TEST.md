@@ -291,3 +291,31 @@ On a temporary course and default OpenCode (no global plugins):
 7. Verify both default and customized OpenCode configurations agree on
    source-of-truth profile/evidence. Human review of actual chat/tool
    output remains essential to test pedagogy.
+
+
+## 14. Human-friendly teaching presentation UAT
+
+In a new session of stock OpenCode and again in a plain-text/limited host,
+using the existing private course READ-ONLY until a separately approved
+write is necessary:
+
+1. Run /learnprint-method: verify plain-language summary first, full actual
+   preferences and v1/v2 hashes available, no claim of tutor compliance.
+2. Run /learnprint-syllabus: complete roadmap in order with prerequisites,
+   hands-on and checks; unknown progress must not be invented.
+3. Say "masih gak ngerti SQL, MySQL, DBeaver": expect ONE concise faithful
+   comparison table or ASCII diagram, explanation in learner language and
+   one small follow-up. No scored failure or written evidence.
+4. Request /learnprint-progress: real counted observations separate from
+   independent performance and retained mastery; no invented due dates.
+5. Test a non-technical topic: useful role-play/writing visual, not a
+   SQL-style diagram or forced code example.
+6. Try host-native selection and numbered text fallback. Selection of a
+   course alone must not create a receipt. Ask explicit write approval.
+7. Check Unicode-limited Windows output; fall back to ASCII when needed.
+   Plain-text content must not require ANSI colours, emojis, or plugins.
+8. Check that an error/help message explains recovery without exposing a
+   long unparsed CLI traceback as the main learner response.
+
+This contract is prompt-level UX: static tests cannot prove a live model
+will consistently follow it. Inspect actual host transcripts.
