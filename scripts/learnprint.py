@@ -2095,6 +2095,10 @@ def collect_workspace_problems(root, registry):
                 raise ValueError("syllabus must be a list")
             if syllabus:
                 _journey_module().validate_units(syllabus, [x["id"] for x in scope])
+            activities = _lesson_activity(sp.parent)
+            valid_ids = {v["unit_id"] for v in syllabus}
+            if any(v["unit_id"] not in valid_ids for v in activities):
+                raise ValueError("learning activity references absent plan unit")
         except (ValueError, TypeError) as exc:
             problems.append(f"invalid course state for {c.get('rel_path')}: {exc}")
     active = registry.get("active_course_id")
