@@ -1868,6 +1868,35 @@ def cmd_course_plan(a):
     return 0
 
 
+def cmd_course_plan_set(a):
+    """Approved, validated plan update. Back up prior state; never erase evidence."""
+    root = _courses_root(a)
+    _require(a, root, "state-update")
+    with workspace_lock(root):
+        c, path, _registry = _registered_course(root, a.course_id)
+        current = load(path)
+        scope = _validated_course_scope(current, c["course_id"], path)
+        proposed = load(a.from_file)
+        helper = _journey_module()
+        helper.validate_units(proposed, [x["id"] for x in scope])
+        helper.preserve_existing(current.get("syllabus", []), proposed)
+        updated = dict(current)
+        updated["syllabus"] = proposed
+        # Each edit has a distinct immutable prior-state snapshot.
+        old = path.read_bytes()
+        name = ("state.before-plan-" + dt.datetime.now(dt.timezone.utc)
+                .strftime("%Y%m%dT%H%M%S%fZ") + ".json")
+        backup = path.with_name(name)
+        if backup.exists():
+            raise ValueError("refusing to overwrite existing plan backup")
+        atomic_write_bytes(backup, old)
+        atomic_write(path, json.dumps(updated, ensure_ascii=False, indent=2) + "\n")
+    print(json.dumps({"status": "updated", "course_id": a.course_id,
+                      "units": len(proposed), "backup": str(backup)},
+                     ensure_ascii=False))
+    return 0
+
+
 def cmd_course_list(a):
     root = _courses_root(a)
     registry = registry_read(root)
@@ -2644,6 +2673,9 @@ def main():
     ov=cs.add_parser("overview");ov.add_argument("--courses-root");ov.set_defaults(func=cmd_course_overview)
     journey=cs.add_parser("plan");journey.add_argument("--course-id",required=True)
     journey.add_argument("--courses-root");journey.set_defaults(func=cmd_course_plan)
+    ps=cs.add_parser("plan-set");ps.add_argument("--course-id",required=True)
+    ps.add_argument("--from-file",required=True);ps.add_argument("--courses-root")
+    ps.add_argument("--approve",action="store_true");ps.set_defaults(func=cmd_course_plan_set)
     scope=cs.add_parser("scope-set");scope.add_argument("--course-id",required=True)
     scope.add_argument("--from-file",required=True);scope.add_argument("--courses-root")
     scope.add_argument("--approve",action="store_true");scope.set_defaults(func=cmd_course_scope_set)
