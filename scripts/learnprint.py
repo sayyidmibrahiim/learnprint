@@ -1888,6 +1888,7 @@ def cmd_course_plan(a):
     units = state.get("syllabus", [])
     if not isinstance(units, list):
         raise ValueError("invalid syllabus in state.json")
+    activity = _lesson_activity(path.parent)
     output = {"course_id": c["course_id"], "title": c["title"],
               "goal": state.get("goal") or c.get("goal"),
               "method": effective_method(root), "units": [],
@@ -1902,6 +1903,10 @@ def cmd_course_plan(a):
         by_id = {x["id"]: x for x in result["competencies"]}
         for uid in ordered:
             unit = dict(index[uid])
+            actual = [e for e in activity if e["unit_id"] == uid]
+            unit["activity_count"] = len(actual)
+            unit["last_discussed"] = actual[-1]["recorded_at"] if actual else None
+            unit["coverage_is"] = "agent_reported_not_mastery" if actual else "not_reported"
             details = [by_id[x] for x in unit["competency_ids"]]
             unit["evidence_status"] = (
                 "maintained" if all(x["status"] == "maintained" for x in details)
@@ -1920,6 +1925,7 @@ def cmd_course_plan(a):
         output["legacy_syllabus_preview"] = (
             legacy.read_text(encoding="utf-8")[:20000] if legacy.is_file() else None)
         output["course_completion"] = "unknown_no_structured_plan"
+    output["recent_learning_activity"] = activity[-10:]
     print(json.dumps(output, ensure_ascii=False, indent=2))
     return 0
 
