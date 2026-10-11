@@ -159,6 +159,31 @@ class TestLearnerJourney(unittest.TestCase):
             (ROOT / "skills/learnprint/SKILL.md").read_text(encoding="utf-8"))
 
 
+    def test_lesson_coverage_is_not_scored_as_mastery(self):
+        with tempfile.TemporaryDirectory() as d:
+            root, c = self.setup_course(d)
+            planfile = Path(d) / "plan.json"
+            planfile.write_text(json.dumps(self.plan()), encoding="utf-8")
+            success("course", "plan-set", "--courses-root", root,
+                    "--course-id", c["course_id"], "--from-file", planfile, "--approve")
+            args = ("course", "lesson-log", "--courses-root", root,
+                    "--course-id", c["course_id"], "--unit-id", "db-basics",
+                    "--kind", "clarification", "--note",
+                    "Learner asked why MySQL differs from DBeaver")
+            self.assertEqual(run(*args).returncode, 2)  # explicit scope flag
+            recorded = success(*args, "--approve")
+            self.assertEqual(recorded["source"], "agent_reported_not_assessment")
+            report = success("course", "plan", "--courses-root", root,
+                             "--course-id", c["course_id"])
+            self.assertEqual(report["units"][0]["activity_count"], 1)
+            self.assertEqual(report["units"][0]["coverage_is"], "agent_reported_not_mastery")
+            self.assertEqual(report["units"][0]["evidence_status"], "not_assessed")
+            self.assertEqual(report["course_completion"], "not_yet_maintained")
+            evidence = (root / ".learnprint" / "events.jsonl").read_bytes()
+            self.assertEqual(evidence, b"")
+            self.assertEqual(len(report["recent_learning_activity"]), 1)
+            self.assertEqual(len(report["recent_learning_activity"][0]["note"]) > 0, True)
+
     def test_read_only_plan_does_not_create_workspace(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d) / "Courses"
