@@ -67,3 +67,16 @@ https://educationendowmentfoundation.org.uk/education-evidence/evidence-reviews/
 
 These are educational-design principles, not proof of a uniquely optimal
 learning style or identical performance across LLM providers.
+
+## What have I covered versus what can I demonstrate?
+
+After actually covering or practicing a module, the tutor can record a
+non-graded note within the existing scoped workspace approval:
+
+    python scripts/learnprint.py course lesson-log --course-id UUID --unit-id UNIT_ID --kind covered --note "Actually discussed SQL vs database engine" --approve
+
+Kinds: covered, practice, question, clarification. The private per-course
+learning-log.jsonl is separate from the canonical assessment evidence ledger.
+Read 'course plan --course-id UUID' to see coverage, last discussion date and
+recent questions; evidence_status remains not_assessed without real answers.
+An agent-reported coverage note is not proof of knowledge or skill mastery.
