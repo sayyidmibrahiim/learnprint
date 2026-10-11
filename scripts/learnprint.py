@@ -11,6 +11,7 @@ import re
 import shutil
 import sys
 import threading
+import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1362,7 +1363,13 @@ def cmd_course_init(a):
                 f"Found: {', '.join(str(p.relative_to(root)) for p in existing[:5])}")
         (lp / "learner").mkdir(exist_ok=True)
         shutil.copyfile(ROOT / "templates/course-registry.json", lp / "registry.json")
-        shutil.copyfile(ROOT / "templates/learner-profile-starter.json", lp / "learner/profile.json")
+        starter = load(ROOT / "templates/learner-profile-starter.json")
+        starter["profile_id"] = str(uuid.uuid4())
+        starter["assessment_offer"] = "not_offered"
+        starter["method_revision"] = 0
+        starter["method_source"] = "founder_default"
+        starter["method_fingerprint"] = method_fingerprint(load(ROOT / "profiles/founder-default.json")["instruction_defaults"])
+        atomic_write(lp / "learner/profile.json", json.dumps(starter, ensure_ascii=False, indent=2) + "\n")
         shutil.copyfile(ROOT / "templates/review-queue.json", lp / "reviews.json")
         (lp / "config.json").write_text(json.dumps(
             {"min_elapsed_hours": RETENTION_POLICY["min_elapsed_hours"],
@@ -1411,6 +1418,255 @@ def cmd_course_move(a):
     entry = course_move(root, a.course_id, a.category,
                         confirm_new_segments=a.confirm_new_segment or [])
     print(json.dumps(entry, ensure_ascii=False, indent=2))
+    return 0
+
+
+# Persistent, private method selection; hashes identify a method revision,
+# never a person's identity or a scientifically proven learning style.
+METHOD_OFFERS = {"not_offered", "deferred", "in_progress", "completed"}
+METHOD_SOURCES = {"founder_default", "personal_assessment"}
+METHOD_PROTOCOL = "learnprint-instruction-defaults-v1"
+
+
+def method_fingerprint(instruction_defaults):
+    if not isinstance(instruction_defaults, dict):
+        raise ValueError("method instruction_defaults must be an object")
+    payload = json.dumps(
+        {"protocol": METHOD_PROTOCOL, "instruction_defaults": instruction_defaults},
+        sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _profile_location(root):
+    return Path(root) / ".learnprint" / "learner" / "profile.json"
+
+
+def _read_local_profile(root):
+    p = _profile_location(root)
+    if not p.exists():
+        raise ValueError(f"learner profile missing: {p}; recover instead of re-initializing")
+    data = load(p)
+    if not isinstance(data, dict):
+        raise ValueError(f"learner profile must be an object: {p}")
+    errors = validate_profile(data)
+    if errors:
+        raise ValueError(f"invalid learner profile: {errors}; repair private profile, do not overwrite")
+    if data.get("public_template") is not False:
+        raise ValueError("private profile cannot be a public founder template")
+    return data
+
+
+def learner_method_status(root):
+    """Read-only overview. Missing workspace does not create files."""
+    root = Path(root)
+    registry_file = registry_path(root)
+    if not registry_file.exists():
+        # A workspace with artifacts but without registry is corrupted,
+        # never a new learner.
+        lp = root / ".learnprint"
+        if lp.exists() and any(p.name != ".lock" for p in lp.iterdir()):
+            raise ValueError("registry missing in existing workspace; recover it first")
+        return {"workspace": "not_initialized", "assessment_status": "unassessed",
+                "assessment_offer": "not_offered", "method_source": "founder_default",
+                "method_revision": 0,
+                "method_fingerprint": method_fingerprint(
+                    load(ROOT / "profiles/founder-default.json")["instruction_defaults"]),
+                "course_count": 0}
+    registry = registry_read(root)
+    p = _read_local_profile(root)
+    assessed = p["assessment_status"] == "assessed"
+    source = "personal_assessment" if assessed else "founder_default"
+    current = (p["instruction_defaults"] if assessed
+               else load(ROOT / "profiles/founder-default.json")["instruction_defaults"])
+    fingerprint = method_fingerprint(current)
+    offer = p.get("assessment_offer") or ("completed" if assessed else "not_offered")
+    if offer not in METHOD_OFFERS:
+        raise ValueError("invalid assessment_offer in learner profile")
+    # Legacy assessed profiles remain assessed; metadata is not required
+    # merely to avoid asking the user to repeat completed assessment.
+    return {"workspace": "initialized", "profile_id": p["profile_id"],
+            "assessment_status": p["assessment_status"],
+            "assessment_offer": offer, "method_source": source,
+            "method_revision": p.get("method_revision", 1 if assessed else 0),
+            "method_fingerprint": fingerprint,
+            "stored_fingerprint_matches": (p.get("method_fingerprint") in (None, fingerprint)),
+            "course_count": len(registry.get("courses", []))}
+
+
+def cmd_learner_status(a):
+    print(json.dumps(learner_method_status(_courses_root(a)), ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_learner_default(a):
+    root = _courses_root(a)
+    _require(a, root, "profile-write")
+    with workspace_lock(root):
+        p = _read_local_profile(root)
+        if p["assessment_status"] == "assessed":
+            raise ValueError("personal assessment already completed; default selection would discard personal method")
+        p["assessment_offer"] = "deferred"
+        p["method_source"] = "founder_default"
+        p["method_revision"] = 0
+        p["method_fingerprint"] = method_fingerprint(
+            load(ROOT / "profiles/founder-default.json")["instruction_defaults"])
+        atomic_write(_profile_location(root), json.dumps(p, ensure_ascii=False, indent=2) + "\n")
+    return cmd_learner_status(a)
+
+
+def cmd_learner_assessment_start(a):
+    root = _courses_root(a)
+    _require(a, root, "profile-write")
+    with workspace_lock(root):
+        p = _read_local_profile(root)
+        if p["assessment_status"] == "assessed" and not a.reassess:
+            raise ValueError("already assessed; use --reassess to explicitly request recalibration")
+        p["assessment_offer"] = "in_progress"
+        atomic_write(_profile_location(root), json.dumps(p, ensure_ascii=False, indent=2) + "\n")
+    return cmd_learner_status(a)
+
+
+def cmd_learner_assessment_complete(a):
+    """Apply a human-answer-backed private draft. Never auto-invent evidence."""
+    root = _courses_root(a)
+    _require(a, root, "profile-write")
+    with workspace_lock(root):
+        old = _read_local_profile(root)
+        if old.get("assessment_offer") != "in_progress":
+            raise ValueError("no assessment in progress; start assessment before completing")
+        candidate_path = root / ".learnprint" / "learner" / "profile-candidate.json"
+        if not candidate_path.is_file() or candidate_path.is_symlink():
+            raise ValueError("missing private profile-candidate.json; complete real assessment before applying")
+        candidate = load(candidate_path)
+        if not isinstance(candidate, dict):
+            raise ValueError("assessment candidate must be an object")
+        if candidate.get("profile_id") != old["profile_id"]:
+            raise ValueError("candidate profile_id differs from stable learner identity")
+        if candidate.get("assessment_status") != "assessed" or candidate.get("public_template") is not False:
+            raise ValueError("candidate must be assessed and private")
+        problems = validate_profile(candidate)
+        if problems:
+            raise ValueError("invalid assessment candidate: " + "; ".join(problems))
+        if not candidate.get("evidence") or not candidate.get("observed_claims"):
+            raise ValueError("real evidence-linked claims required to complete assessment")
+        previous_revision = old.get("method_revision", 0)
+        if not isinstance(previous_revision, int) or previous_revision < 0:
+            raise ValueError("invalid previous method_revision")
+        previous_path = _profile_location(root).with_name(
+            f"profile.previous-{previous_revision:04d}.json")
+        if previous_path.exists():
+            raise ValueError(f"previous profile backup exists: {previous_path}; review before continuing")
+        # Immutable snapshot of the previous profile, then atomic new profile.
+        atomic_write_bytes(previous_path, (_profile_location(root)).read_bytes())
+        candidate["assessment_offer"] = "completed"
+        candidate["method_source"] = "personal_assessment"
+        candidate["method_revision"] = previous_revision + 1
+        candidate["method_fingerprint"] = method_fingerprint(candidate["instruction_defaults"])
+        atomic_write(_profile_location(root), json.dumps(candidate, ensure_ascii=False, indent=2) + "\n")
+    return cmd_learner_status(a)
+
+
+def _validated_course_scope(state, course_id, course_path):
+    if not isinstance(state, dict) or state.get("schema_version") != "1.0":
+        raise ValueError(f"invalid course state schema: {course_path}")
+    if state.get("course_id") != course_id:
+        raise ValueError(f"course state ID mismatch: {course_path}")
+    scope = state.get("learning_scope")
+    if not isinstance(scope, list):
+        raise ValueError(f"course scope must be a list: {course_path}")
+    ids = set()
+    for item in scope:
+        if not isinstance(item, dict):
+            raise ValueError(f"competency must be an object: {course_path}")
+        cid = item.get("id")
+        if not isinstance(cid, str) or not cid.strip() or cid in ids:
+            raise ValueError(f"missing/duplicate competency id in {course_path}")
+        ids.add(cid)
+        if not isinstance(item.get("name"), str) or not item["name"].strip():
+            raise ValueError(f"competency {cid} missing name in {course_path}")
+        if item.get("status", "unknown") not in STATUSES:
+            raise ValueError(f"competency {cid} invalid status in {course_path}")
+        if "evidence_ids" in item and (not isinstance(item["evidence_ids"], list)
+                                      or not all(isinstance(v, str) for v in item["evidence_ids"])):
+            raise ValueError(f"competency {cid} invalid evidence_ids in {course_path}")
+    return scope
+
+
+def course_overview(root):
+    """Read-only, evidence-derived menu; never invents percentages."""
+    root = Path(root)
+    if not (root / ".learnprint" / "registry.json").exists():
+        # Do not misreport a corrupt existing workspace as an empty one.
+        learner_method_status(root)
+        return {"status": "workspace_not_initialized", "courses": []}
+    registry = registry_read(root)
+    ledger = ledger_read_trusted(root / ".learnprint" / "events.jsonl", workspace_root=root)
+    policy = load_retention_policy(root)
+    now = dt.datetime.now(dt.timezone.utc)
+    result = []
+    for c in registry.get("courses", []):
+        item = {"course_id": c["course_id"], "title": c.get("title"),
+                "category_path": c.get("category_path"),
+                "rel_path": c.get("rel_path"), "last_activity": c.get("last_activity"),
+                "active": c.get("course_id") == registry.get("active_course_id")}
+        path = root / c["rel_path"] / "state.json"
+        try:
+            state = load(path)
+            scope = _validated_course_scope(state, c["course_id"], path)
+            if not scope:
+                item.update({"status": "not_assessed", "progress": None,
+                             "competency_count": 0, "next_action": "run baseline diagnostic"})
+            else:
+                topic = {"topic_id": c.get("topic_id") or c["course_id"],
+                         "learning_scope": scope, "goal": c.get("goal", "")}
+                scored = progress(topic, ledger, now=now, policy=policy, registry=registry)
+                item.update({"status": "scored", "progress": scored,
+                             "competency_count": len(scope),
+                             "next_action": "review due competencies or continue next unit"})
+        except (ValueError, KeyError, TypeError, OSError) as exc:
+            item.update({"status": "state_invalid", "progress": None,
+                         "reason": str(exc), "next_action": "repair state without overwriting evidence"})
+        result.append(item)
+    result.sort(key=lambda x: (not x["active"], x["last_activity"] is None,
+                               x["last_activity"] or "", x["category_path"], x["title"] or ""))
+    return {"status": "ok", "courses": result}
+
+
+def cmd_course_overview(a):
+    print(json.dumps(course_overview(_courses_root(a)), ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_course_scope_set(a):
+    """Validated, locked scope update; never overwrite evidence or course ID."""
+    root = _courses_root(a)
+    _require(a, root, "state-update")
+    with workspace_lock(root):
+        registry = registry_read(root)
+        c = next((c for c in registry["courses"] if c["course_id"] == a.course_id), None)
+        if c is None:
+            raise ValueError(f"unknown course_id: {a.course_id}")
+        path = root / c["rel_path"] / "state.json"
+        original = load(path)
+        _validated_course_scope(original, c["course_id"], path)
+        source = Path(a.from_file).resolve()
+        if not source.is_file():
+            raise ValueError(f"scope candidate missing: {source}")
+        proposed = load(source)
+        if not isinstance(proposed, list):
+            raise ValueError("scope JSON file must contain a list of competencies")
+        candidate = dict(original)
+        candidate["learning_scope"] = proposed
+        _validated_course_scope(candidate, c["course_id"], path)
+        ledger = ledger_read_trusted(root / ".learnprint" / "events.jsonl", workspace_root=root)
+        before = {item["id"] for item in original["learning_scope"]}
+        after = {item["id"] for item in proposed}
+        referenced = {e["competency_id"] for e in ledger
+                      if e.get("topic_id") == (c.get("topic_id") or c["course_id"])}
+        if (before | referenced) - after:
+            raise ValueError("scope update cannot remove existing/referenced competencies")
+        atomic_write(path, json.dumps(candidate, ensure_ascii=False, indent=2) + "\n")
+    print(f"SCOPE UPDATED: {a.course_id} ({len(proposed)} competencies)")
     return 0
 
 
@@ -2187,6 +2443,10 @@ def main():
     mv.add_argument("--approve",action="store_true");mv.add_argument("--courses-root")
     mv.set_defaults(func=cmd_course_move)
     cl=cs.add_parser("list");cl.add_argument("--courses-root");cl.set_defaults(func=cmd_course_list)
+    ov=cs.add_parser("overview");ov.add_argument("--courses-root");ov.set_defaults(func=cmd_course_overview)
+    scope=cs.add_parser("scope-set");scope.add_argument("--course-id",required=True)
+    scope.add_argument("--from-file",required=True);scope.add_argument("--courses-root")
+    scope.add_argument("--approve",action="store_true");scope.set_defaults(func=cmd_course_scope_set)
     db=cs.add_parser("dashboard");db.add_argument("--approve",action="store_true")
     db.add_argument("--courses-root");db.set_defaults(func=cmd_course_dashboard)
     rs=cs.add_parser("resume");rs.add_argument("--courses-root");rs.set_defaults(func=cmd_course_resume)
@@ -2204,6 +2464,16 @@ def main():
     mg.add_argument("--to",dest="migrate_to",required=True);mg.add_argument("--category",default=None)
     mg.add_argument("--approve",action="store_true");mg.add_argument("--dry-run",action="store_true")
     mg.set_defaults(func=cmd_migrate)
+    learner=sub.add_parser("learner")
+    lm=learner.add_subparsers(dest="learner_cmd",required=True)
+    st=lm.add_parser("status");st.add_argument("--courses-root");st.set_defaults(func=cmd_learner_status)
+    default=lm.add_parser("use-default");default.add_argument("--courses-root")
+    default.add_argument("--approve",action="store_true");default.set_defaults(func=cmd_learner_default)
+    start=lm.add_parser("assessment-start");start.add_argument("--courses-root")
+    start.add_argument("--approve",action="store_true");start.add_argument("--reassess",action="store_true")
+    start.set_defaults(func=cmd_learner_assessment_start)
+    done=lm.add_parser("assessment-complete");done.add_argument("--courses-root")
+    done.add_argument("--approve",action="store_true");done.set_defaults(func=cmd_learner_assessment_complete)
     a=p.parse_args()
     try: return a.func(a)
     except (OSError,ValueError,KeyError,TypeError,json.JSONDecodeError) as e:
