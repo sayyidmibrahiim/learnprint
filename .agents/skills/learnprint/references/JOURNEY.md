@@ -94,6 +94,18 @@ maintained only when its bounded competencies satisfy canonical evidence
 and delayed-recall gates. Always show outstanding due reviews and unverified
 assumptions; no certificate claiming universal knowledge.
 
+## Non-graded record of taught material
+After a real unit discussion, hands-on practice, clarification or answered
+question, append a truthful short private session note with:
+python scripts/learnprint.py course lesson-log --course-id ID --unit-id UNIT_ID
+  --kind covered|practice|question|clarification --note "ACTUAL EVENT" --approve
+Use this ONLY with a structured syllabus and within standing learner approval.
+It is labeled agent_reported_not_assessment, stored in the course's private
+learning-log.jsonl, and is NEVER consumed by mastery scoring. The read-only
+course plan displays activity counts, latest discussion date, and recent notes.
+This distinguishes "we discussed this" from "you proved you can do this".
+Do not fabricate notes; evidence ledger retains exclusive assessment authority.
+
 ## 6. After every learning session
 Summarize in the user's language:
 - Unit covered and learner's real action/output (or "not executed")
