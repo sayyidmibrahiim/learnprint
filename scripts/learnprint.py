@@ -1646,7 +1646,19 @@ def cmd_course_scope_set(a):
             raise ValueError(f"unknown course_id: {a.course_id}")
         path = root / c["rel_path"] / "state.json"
         original = load(path)
-        _validated_course_scope(original, c["course_id"], path)
+        # Legacy agents may have persisted scope objects containing id/status
+        # but missing 'name'. Allow a *validated replacement* to repair that
+        # shape, while preserving every original/referenced competency ID.
+        if (not isinstance(original, dict) or original.get("schema_version") != "1.0"
+                or original.get("course_id") != c["course_id"]
+                or not isinstance(original.get("learning_scope"), list)):
+            raise ValueError(f"invalid course identity/scope: {path}")
+        original_ids = []
+        for item in original["learning_scope"]:
+            if (not isinstance(item, dict) or not isinstance(item.get("id"), str)
+                    or not item["id"].strip() or item["id"] in original_ids):
+                raise ValueError(f"unrecoverable malformed competency ID in {path}")
+            original_ids.append(item["id"])
         source = Path(a.from_file).resolve()
         if not source.is_file():
             raise ValueError(f"scope candidate missing: {source}")
