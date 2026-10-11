@@ -1957,13 +1957,18 @@ def cmd_course_method_audit(a):
     spec.loader.exec_module(module)
     root = _courses_root(a)
     course, path, registry = _registered_course(root, a.course_id)
-    state = load(path)
-    scope = _validated_course_scope(state, a.course_id, path)
-    units = state.get("syllabus", [])
-    if not isinstance(units, list):
-        raise ValueError("syllabus is not an array")
-    if units:
-        _journey_module().validate_units(units, [c["id"] for c in scope])
+    units, state_problem = [], None
+    try:
+        state = load(path)
+        scope = _validated_course_scope(state, a.course_id, path)
+        units = state.get("syllabus", [])
+        if not isinstance(units, list):
+            raise ValueError("syllabus is not an array")
+        if units:
+            _journey_module().validate_units(units, [c["id"] for c in scope])
+    except (ValueError, TypeError, KeyError, OSError) as exc:
+        state_problem = "invalid course state: " + str(exc)
+        units = []
     method = effective_method(root)
     sessions = _method_session_receipts(path.parent)
     if a.session_id and not any(
@@ -1985,7 +1990,8 @@ def cmd_course_method_audit(a):
                       "bytes": len(payload), "provenance": "user_supplied_unverified"}
     report = module.build_report(
         a.course_id, method, sessions, units, activities, ledger,
-        selected_session=a.session_id, transcript=transcript)
+        selected_session=a.session_id, transcript=transcript,
+        state_problem=state_problem)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 2 if report["overall"] == "FAIL" else 0
 
