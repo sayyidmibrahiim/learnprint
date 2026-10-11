@@ -349,6 +349,8 @@ LOCK_TABLE = {
     "course plan": {"mutates": False, "locks": False},
     "course plan-set": {"mutates": True, "locks": True},
     "course lesson-log": {"mutates": True, "locks": True},
+    "course session-start": {"mutates": True, "locks": True},
+    "course method-audit": {"mutates": False, "locks": False},
     "report": {"mutates": False, "locks": False},
 }
 
@@ -590,6 +592,11 @@ def validate_event(e):
         errs.append("course_id must be string")
     elif isinstance(e.get("course_id"), str) and not routing.is_course_id(e["course_id"]):
         errs.append("course_id must be UUIDv4")
+    if "session_id" in e:
+        try:
+            uuid.UUID(e["session_id"])
+        except (ValueError, AttributeError, TypeError):
+            errs.append("session_id must be a UUID")
     if "grader_source" in e and e["grader_source"] not in GRADER_SOURCES:
         errs.append("invalid event.grader_source")
     for link in ("confirms_event_id", "corrects_event_id", "corroborates_event_id"):
@@ -1439,6 +1446,17 @@ def method_fingerprint(instruction_defaults):
     return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def effective_method_fingerprint(settings, preferences):
+    """Full v2 contract: instructional defaults AND learner preferences."""
+    if not isinstance(settings, dict) or not isinstance(preferences, dict):
+        raise ValueError("method settings and preferences must be objects")
+    payload = json.dumps(
+        {"protocol": "learnprint-effective-method-v2",
+         "instruction_defaults": settings, "preferences": preferences},
+        sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def _profile_location(root):
     return Path(root) / ".learnprint" / "learner" / "profile.json"
 
@@ -1567,25 +1585,44 @@ def learner_method_status(root):
 
 
 def effective_method(root):
-    """Read-only effective instruction settings with verifiable fingerprint."""
+    """Resolve the actual entire instruction contract without mutating data.
+
+    Keep the legacy defaults-only fingerprint for old private profiles,
+    and add v2 effective_fingerprint including preferences. Never silently
+    use founder preferences for an assessed personal profile.
+    """
     status = learner_method_status(root)
+    founder = load(ROOT / "profiles" / "founder-default.json")
     if status["workspace"] == "not_initialized":
-        settings = load(ROOT / "profiles/founder-default.json")["instruction_defaults"]
+        active = founder
         source = "founder_default"
     else:
         private = _read_local_profile(root)
         if private["assessment_status"] in {"assessed", "provisional"}:
-            settings = private["instruction_defaults"]
-            source = "personal_assessment" if private["assessment_status"] == "assessed" else "personal_provisional"
+            active = private
+            source = ("personal_assessment" if private["assessment_status"] == "assessed"
+                      else "personal_provisional")
         else:
-            settings = load(ROOT / "profiles/founder-default.json")["instruction_defaults"]
+            active = founder
             source = "founder_default"
-    fingerprint = method_fingerprint(settings)
-    if fingerprint != status["method_fingerprint"] or not status.get("stored_fingerprint_matches", True):
+    settings = active["instruction_defaults"]
+    preferences = active.get("preferences", {})
+    if not isinstance(preferences, dict):
+        raise ValueError("effective method preferences must be object")
+    legacy = method_fingerprint(settings)
+    if legacy != status["method_fingerprint"] or not status.get("stored_fingerprint_matches", True):
         raise ValueError("effective method fingerprint mismatch: inspect profile before teaching")
-    return {"source": source, "fingerprint": fingerprint,
-            "instruction_defaults": settings, "assessment_status": status["assessment_status"],
-            "verification": "settings resolved; tutor adherence must be checked in live session"}
+    full = effective_method_fingerprint(settings, preferences)
+    return {"source": source, "fingerprint": legacy,
+            "fingerprint_scope": "legacy_instruction_defaults_only",
+            "effective_fingerprint": full,
+            "effective_fingerprint_scope": "instruction_defaults_and_preferences",
+            "method_protocol": "learnprint-effective-method-v2",
+            "method_revision": status.get("method_revision", 0),
+            "profile_id": status.get("profile_id"),
+            "assessment_status": status["assessment_status"],
+            "preferences": preferences, "instruction_defaults": settings,
+            "verification": "Configuration resolved; behavioral adherence needs independent session evidence"}
 
 
 def cmd_learner_method(a):
@@ -1856,6 +1893,109 @@ def _lesson_activity(course_directory):
     return rows
 
 
+def _method_session_receipts(directory):
+    """Read-only strict validation of course-scoped, private method receipts."""
+    path = directory / "method-sessions.jsonl"
+    if not path.exists():
+        return []
+    raw = path.read_bytes()
+    if raw and not raw.endswith(b"\n"):
+        raise ValueError("method receipt ledger has truncated terminal record")
+    rows, seen = [], set()
+    for index, line in enumerate(raw.split(b"\n"), 1):
+        if not line:
+            continue
+        try:
+            row = json.loads(line.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise ValueError(f"method receipt ledger corrupt at line {index}: {exc}")
+        fields = ("session_id", "course_id", "effective_fingerprint",
+                  "legacy_fingerprint", "method_source", "started_at")
+        if (not isinstance(row, dict) or any(
+                not isinstance(row.get(key), str) or not row[key].strip()
+                for key in fields) or row["session_id"] in seen
+                or not isinstance(row.get("method_revision"), int)
+                or row["method_revision"] < 0):
+            raise ValueError(f"invalid/duplicate method session receipt line {index}")
+        try:
+            uuid.UUID(row["session_id"])
+        except (ValueError, AttributeError):
+            raise ValueError(f"invalid session UUID at line {index}")
+        seen.add(row["session_id"])
+        rows.append(row)
+    return rows
+
+
+def cmd_course_session_start(a):
+    """Capture configured method identity; NOT proof that the AI used it."""
+    root = _courses_root(a)
+    _require(a, root, "state-update")
+    with workspace_lock(root):
+        course, path, _ = _registered_course(root, a.course_id)
+        method = effective_method(root)
+        sessions = _method_session_receipts(path.parent)
+        receipt = {"session_id": str(uuid.uuid4()),
+                   "course_id": course["course_id"],
+                   "method_source": method["source"],
+                   "method_revision": method["method_revision"],
+                   "effective_fingerprint": method["effective_fingerprint"],
+                   "legacy_fingerprint": method["fingerprint"],
+                   "started_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                   "evidence_kind": "configuration_receipt_only"}
+        target = path.parent / "method-sessions.jsonl"
+        append_event_line(target, json.dumps(receipt, ensure_ascii=False))
+    print(json.dumps(receipt, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_course_method_audit(a):
+    """Evaluate actual canonical artifacts conservatively, without mutations."""
+    import importlib.util
+    module_path = ROOT / "scripts" / "learnprint_audit.py"
+    spec = importlib.util.spec_from_file_location("learnprint_audit", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    root = _courses_root(a)
+    course, path, registry = _registered_course(root, a.course_id)
+    units, state_problem = [], None
+    try:
+        state = load(path)
+        scope = _validated_course_scope(state, a.course_id, path)
+        units = state.get("syllabus", [])
+        if not isinstance(units, list):
+            raise ValueError("syllabus is not an array")
+        if units:
+            _journey_module().validate_units(units, [c["id"] for c in scope])
+    except (ValueError, TypeError, KeyError, OSError) as exc:
+        state_problem = "invalid course state: " + str(exc)
+        units = []
+    method = effective_method(root)
+    sessions = _method_session_receipts(path.parent)
+    if a.session_id and not any(
+            s["session_id"] == a.session_id and s["course_id"] == a.course_id
+            for s in sessions):
+        raise ValueError("unknown session_id for selected course")
+    activities = _lesson_activity(path.parent)
+    ledger = ledger_read_trusted(root / ".learnprint" / "events.jsonl",
+                                 workspace_root=root)
+    transcript = None
+    if a.transcript_file:
+        tp = Path(a.transcript_file)
+        if not tp.is_file() or tp.is_symlink():
+            raise ValueError("transcript must be an existing regular file, not symlink")
+        if tp.stat().st_size > 5_000_000:
+            raise ValueError("transcript exceeds 5 MB audit limit")
+        payload = tp.read_bytes()
+        transcript = {"sha256": hashlib.sha256(payload).hexdigest(),
+                      "bytes": len(payload), "provenance": "user_supplied_unverified"}
+    report = module.build_report(
+        a.course_id, method, sessions, units, activities, ledger,
+        selected_session=a.session_id, transcript=transcript,
+        state_problem=state_problem)
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 2 if report["overall"] == "FAIL" else 0
+
+
 def cmd_course_lesson_log(a):
     """Record what was actually discussed; never assign a competence score."""
     root = _courses_root(a)
@@ -1872,12 +2012,18 @@ def cmd_course_lesson_log(a):
         _journey_module().validate_units(units, [x["id"] for x in scope])
         if a.unit_id not in {u["unit_id"] for u in units}:
             raise ValueError("unknown lesson unit_id: " + a.unit_id)
+        if a.session_id and not any(
+                x["session_id"] == a.session_id and x["course_id"] == a.course_id
+                for x in _method_session_receipts(path.parent)):
+            raise ValueError("session_id not registered for this course")
         target = path.parent / "learning-log.jsonl"
         _lesson_activity(path.parent)
         event = {"event_id": str(uuid.uuid4()), "unit_id": a.unit_id,
                  "kind": a.kind, "note": a.note,
                  "recorded_at": dt.datetime.now(dt.timezone.utc).isoformat(),
                  "source": "agent_reported_not_assessment"}
+        if a.session_id:
+            event["session_id"] = a.session_id
         append_event_line(target, json.dumps(event, ensure_ascii=False))
     print(json.dumps(event, ensure_ascii=False))
     return 0
@@ -2628,6 +2774,8 @@ def cmd_record(a):
     if courses_mode:
         return _cmd_record_courses(a, w)
     if not (w/"manifest.json").exists(): raise ValueError("Initialize workspace first")
+    if getattr(a, "session_id", None):
+        raise ValueError("--session-id is only supported for Courses workspaces")
     if not a.approve: raise ValueError("Explicit write approval required: --approve")
     rubric=json.loads(a.rubric)
     e={"event_id":a.event_id,"date":dt.datetime.now(dt.timezone.utc).isoformat(),
@@ -2678,6 +2826,15 @@ def _cmd_record_courses(a, w):
              "confidence_self_report": a.confidence, "is_synthetic_example": False}
         if course_id:
             e["course_id"] = course_id
+        session_id = getattr(a, "session_id", None)
+        if session_id:
+            if not course_id:
+                raise ValueError("--session-id requires --course-id in Courses mode")
+            selected_path = root / entry["rel_path"]
+            if not any(x["session_id"] == session_id and x["course_id"] == course_id
+                       for x in _method_session_receipts(selected_path)):
+                raise ValueError("session_id not registered for selected course")
+            e["session_id"] = session_id
         for link, val in (("confirms_event_id", getattr(a, "confirms", None)),
                           ("corrects_event_id", getattr(a, "corrects", None)),
                           ("corroborates_event_id", getattr(a, "corroborates", None))):
@@ -2722,6 +2879,7 @@ def main():
     rec.add_argument("--help-level",dest="help",choices=sorted(HELP),default="none")
     rec.add_argument("--confidence",type=int);rec.add_argument("--approve",action="store_true");rec.set_defaults(func=cmd_record)
     rec.add_argument("--course-id",default=None)
+    rec.add_argument("--session-id",default=None)
     rec.add_argument("--grader-source",choices=sorted(GRADER_SOURCES),default=None)
     rec.add_argument("--confirms",default=None);rec.add_argument("--corrects",default=None)
     rec.add_argument("--corroborates",default=None)
@@ -2751,10 +2909,17 @@ def main():
     ov=cs.add_parser("overview");ov.add_argument("--courses-root");ov.set_defaults(func=cmd_course_overview)
     journey=cs.add_parser("plan");journey.add_argument("--course-id",required=True)
     journey.add_argument("--courses-root");journey.set_defaults(func=cmd_course_plan)
+    session=cs.add_parser("session-start");session.add_argument("--course-id",required=True)
+    session.add_argument("--courses-root");session.add_argument("--approve",action="store_true")
+    session.set_defaults(func=cmd_course_session_start)
+    audit=cs.add_parser("method-audit");audit.add_argument("--course-id",required=True)
+    audit.add_argument("--courses-root");audit.add_argument("--session-id")
+    audit.add_argument("--transcript-file");audit.set_defaults(func=cmd_course_method_audit)
     ll=cs.add_parser("lesson-log");ll.add_argument("--course-id",required=True)
     ll.add_argument("--unit-id",required=True);ll.add_argument("--kind",required=True,
         choices=sorted(LESSON_ACTIVITY_KINDS))
     ll.add_argument("--note",required=True);ll.add_argument("--courses-root")
+    ll.add_argument("--session-id")
     ll.add_argument("--approve",action="store_true");ll.set_defaults(func=cmd_course_lesson_log)
     ps=cs.add_parser("plan-set");ps.add_argument("--course-id",required=True)
     ps.add_argument("--from-file",required=True);ps.add_argument("--courses-root")

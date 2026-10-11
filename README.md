@@ -183,3 +183,17 @@ Full contract, examples and researched rationale:
 [Learning Journey](docs/LEARNING-JOURNEY.md);
 [Python vs Go/Rust decision](docs/ENGINE-LANGUAGE-DECISION.md).
 
+
+## Verify effective learning method and session evidence
+
+Use `/learnprint-method` (read-only) to see the complete effective
+instructional defaults AND language/analogy/visual/feedback preferences,
+source, revision, and the v2 effective_fingerprint. The legacy fingerprint
+is retained for compatibility; it covers defaults only.
+Use `/learnprint-audit` (read-only) to inspect session-linked method
+receipt, lesson activities, and actual canonical answer records with
+PASS/FAIL/NOT_VERIFIED. Tutor-authored notes are NOT proof of compliance.
+The audit deliberately cannot return an overall unconditional PASS merely
+because the agent claims it obeyed the method. Before teaching, the tutor
+can create an approved private session receipt, then associate evidence
+with the returned UUID. Read [Method Audit](docs/METHOD-AUDIT.md).

@@ -80,3 +80,14 @@ learning-log.jsonl is separate from the canonical assessment evidence ledger.
 Read 'course plan --course-id UUID' to see coverage, last discussion date and
 recent questions; evidence_status remains not_assessed without real answers.
 An agent-reported coverage note is not proof of knowledge or skill mastery.
+
+## Audit the actual method instead of taking the tutor's word
+
+Run `learner method` to get the complete active method/preferences and
+v2 effective fingerprint. During authorized sessions the first-party CLI
+can record a method receipt and link notes/graded answers to its UUID.
+`course method-audit` checks linked artifacts and flags configuration
+drift, but explicitly marks human-dependent compliance as NOT_VERIFIED.
+Read [Method Audit](METHOD-AUDIT.md). Agent-written explanations and
+self-reported notes cannot independently prove the tutor followed the
+method or that a real hands-on action was performed.

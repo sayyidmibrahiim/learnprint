@@ -42,6 +42,18 @@ See rules/WORKSPACE.md and rules/COURSE-ROUTING.md.
 2. Otherwise use profiles/founder-default.json as fallback.
 3. Never modify the public founder profile when teaching a new learner.
 
+## Method verification / session audit
+Before teaching, read the complete settings AND preferences from
+`python scripts/learnprint.py learner method`; display source, revision,
+legacy fingerprint, and full effective_fingerprint. After actual learner
+consent, start a new session receipt with
+`course session-start --course-id ID --approve` and pass --session-id
+when recording real learner answers or lesson activities. For
+/learnprint-audit use read-only `course method-audit --course-id ID`.
+Its PASS only proves specific artifacts; never claim that agent-reported
+notes or hash matches objectively prove teaching-method adherence.
+Behavioral compliance remains NOT_VERIFIED without independent review.
+
 ## Tutor UX contract
 Before testing or teaching, read the project-local
 skills/learnprint/references/JOURNEY.md and run:

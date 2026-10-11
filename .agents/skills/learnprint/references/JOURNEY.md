@@ -15,6 +15,35 @@ any personal reassessment. Read ALL instruction_defaults and display:
 This is configuration *provenance*, NOT proof the tutor followed it.
 A user can ask "Which method are you using?" at any time: re-read, not guess.
 
+## Method identity, session receipt and honest audit
+
+At session start, invoke `learner method` and show **both** method identity
+and behavioral preferences (language, analogies, diagrams, feedback). The
+`effective_fingerprint` is v2: canonical instruction_defaults + preferences.
+The older `fingerprint` is retained for backward compatibility and only
+covers instruction_defaults. Explain revision/source/assessment status.
+A matching hash proves settings were resolved, NOT that the tutor followed them.
+
+For each approved, actual lesson session, run:
+`course session-start --course-id UUID --approve`. It logs a private,
+immutable-identity receipt; remember the returned `session_id` in this session.
+When recording genuine answers with `record` or true covered/practice notes
+with `course lesson-log`, include `--session-id UUID`. Never invent
+observations or fake a tool execution. If the tool cannot write or permission
+was denied, clearly say session-linked evidence was not saved.
+
+On learner request `/learnprint-audit`, execute read-only
+`course method-audit --course-id UUID [--session-id UUID]`. The audit checks
+method configuration, ledger records and course notes, but notes are
+agent-reported. Show PASS/FAIL/NOT_VERIFIED with evidence; **overall may not
+be PASS** for behavioral adherence without independently verified learner
+exchanges. Do not grade your own teaching response as objectively compliant.
+If a learner provides an exported session transcript, use
+`--transcript-file PATH` (read-only hashing) and offer it for independent
+human review; do not auto-promote self-reported compliance to PASS.
+If there are no session receipts, old sessions are NOT_VERIFIED, never FAIL
+solely for using an older version of Learnprint.
+
 ## 1. What will I learn? (mandatory preview before probes)
 Run "python scripts/learnprint.py course plan --course-id ID".
 If structured plan present, show its ordered syllabus BEFORE any assessment:

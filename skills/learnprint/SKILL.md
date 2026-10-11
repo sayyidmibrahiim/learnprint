@@ -66,6 +66,9 @@ prerequisite changes with approval. Never grade "I don't understand" as a
 failed independent answer. Follow JOURNEY.md on EVERY /learnprint action.
 
 ## Actions
+- /learnprint-method: run learner method; show full preferences and v2 fingerprint.
+- /learnprint-audit: read-only course method-audit; PASS only for actual artifacts,
+  NOT_VERIFIED for unproven tutor behavior. Start a session receipt when authorized.
 - /learnprint or /learnprint-help: show method status and action menu; no writes.
 - /learnprint-learn TOPIC: resolve in registry first, reuse exact course ID/aliases.
   If not_found, classify FULL meaning (what is studied ABOUT, medium language,
@@ -112,9 +115,6 @@ Use course HANDOFF.md and on-disk ledger across sessions/hosts; global chat memo
 is supplementary only. Cite sources only if actually checked.
 
 ## Portability
-Default OpenCode receives project commands in .opencode/commands and native
-project skills in .agents/skills; this skill can be loaded without global customizations.
-If a host cannot discover native skills, read this source SKILL.md and the
-packaged assess/learn skills directly via file tools, or use prompts/ fallback.
-If no filesystem access, continue teaching in chat and provide an explicit
-portable LEARNING_STATE. NEVER claim a file was written without verification.
+Project-local .opencode/commands and .agents/skills require no global tools.
+If host discovery fails, read bundled SKILL.md files directly. If no file
+access, teach in chat and give LEARNING_STATE without claiming files were written.
