@@ -54,3 +54,13 @@ the current course's state.json (via validated scope-set where applicable),
 Courses/.learnprint/events.jsonl and the review queue, plus the course HANDOFF.md.
 The older manifest.json/topics layout applies only to legacy workspaces,
 not new Courses/ learners. If filesystem unavailable, output a portable `LEARNING_STATE` block the learner can save. Never claim an artifact was written unless a tool verifies it. Use small-context recovery rather than relying on long conversation history.
+
+## Repairing a historical mistaken score
+
+Do not secretly rewrite or purge old learner evidence, including a prior
+"masih gak ngerti" answer graded as 0. Explain the discrepancy and first
+obtain event-specific learner approval. Only then use `record --task-type
+correction --corrects EVENT_ID --exclude-from-assessment --approve` with the
+same course/topic/competency, a clear reason, and correct standing write scope.
+This retains the original row; no automatic evidence correction occurs when
+loading Learnprint. Treat the corrective metadata as non-mastery evidence.

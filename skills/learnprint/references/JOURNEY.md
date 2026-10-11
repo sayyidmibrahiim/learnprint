@@ -104,7 +104,10 @@ Demonstration is not the same as independently proven performance.
 When learner says "bingung", "masih gak ngerti", "why", asks for examples
 or contradicts an explanation:
 - STOP the current assessment. Do not score those words as incorrect test
-  answers. Don't advance to the next unit.
+  answers. Don't advance to the next unit. New confusion-only replies are
+  rejected by the record CLI; do not bypass that guard by rewording confusion
+  as a failed response. Historical misclassification requires separate
+  human approval for a linked append-only correction.
 - Ask ONE focused diagnostic question to identify the exact sticking point,
   or use context to avoid re-asking. Answer their actual question first.
 - Check the current syllabus and prerequisites. If already present, go to
