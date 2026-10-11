@@ -22,7 +22,9 @@ def build_report(course_id, method, sessions, lesson_units, activities,
             "NOT_VERIFIED", [], "No method-session receipt for requested course/session")
     else:
         same = (session["effective_fingerprint"] == method["effective_fingerprint"]
-                and session["legacy_fingerprint"] == method["fingerprint"])
+                and session["legacy_fingerprint"] == method["fingerprint"]
+                and session["method_source"] == method["source"]
+                and session["method_revision"] == method["method_revision"])
         checks["method_receipt"] = check(
             "PASS" if same else "FAIL",
             [session["session_id"]],
