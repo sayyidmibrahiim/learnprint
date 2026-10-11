@@ -590,6 +590,11 @@ def validate_event(e):
         errs.append("course_id must be string")
     elif isinstance(e.get("course_id"), str) and not routing.is_course_id(e["course_id"]):
         errs.append("course_id must be UUIDv4")
+    if "session_id" in e:
+        try:
+            uuid.UUID(e["session_id"])
+        except (ValueError, AttributeError, TypeError):
+            errs.append("session_id must be a UUID")
     if "grader_source" in e and e["grader_source"] not in GRADER_SOURCES:
         errs.append("invalid event.grader_source")
     for link in ("confirms_event_id", "corrects_event_id", "corroborates_event_id"):
@@ -1999,12 +2004,18 @@ def cmd_course_lesson_log(a):
         _journey_module().validate_units(units, [x["id"] for x in scope])
         if a.unit_id not in {u["unit_id"] for u in units}:
             raise ValueError("unknown lesson unit_id: " + a.unit_id)
+        if a.session_id and not any(
+                x["session_id"] == a.session_id and x["course_id"] == a.course_id
+                for x in _method_session_receipts(path.parent)):
+            raise ValueError("session_id not registered for this course")
         target = path.parent / "learning-log.jsonl"
         _lesson_activity(path.parent)
         event = {"event_id": str(uuid.uuid4()), "unit_id": a.unit_id,
                  "kind": a.kind, "note": a.note,
                  "recorded_at": dt.datetime.now(dt.timezone.utc).isoformat(),
                  "source": "agent_reported_not_assessment"}
+        if a.session_id:
+            event["session_id"] = a.session_id
         append_event_line(target, json.dumps(event, ensure_ascii=False))
     print(json.dumps(event, ensure_ascii=False))
     return 0
@@ -2755,6 +2766,8 @@ def cmd_record(a):
     if courses_mode:
         return _cmd_record_courses(a, w)
     if not (w/"manifest.json").exists(): raise ValueError("Initialize workspace first")
+    if getattr(a, "session_id", None):
+        raise ValueError("--session-id is only supported for Courses workspaces")
     if not a.approve: raise ValueError("Explicit write approval required: --approve")
     rubric=json.loads(a.rubric)
     e={"event_id":a.event_id,"date":dt.datetime.now(dt.timezone.utc).isoformat(),
@@ -2805,6 +2818,15 @@ def _cmd_record_courses(a, w):
              "confidence_self_report": a.confidence, "is_synthetic_example": False}
         if course_id:
             e["course_id"] = course_id
+        session_id = getattr(a, "session_id", None)
+        if session_id:
+            if not course_id:
+                raise ValueError("--session-id requires --course-id in Courses mode")
+            selected_path = root / entry["rel_path"]
+            if not any(x["session_id"] == session_id and x["course_id"] == course_id
+                       for x in _method_session_receipts(selected_path)):
+                raise ValueError("session_id not registered for selected course")
+            e["session_id"] = session_id
         for link, val in (("confirms_event_id", getattr(a, "confirms", None)),
                           ("corrects_event_id", getattr(a, "corrects", None)),
                           ("corroborates_event_id", getattr(a, "corroborates", None))):
@@ -2849,6 +2871,7 @@ def main():
     rec.add_argument("--help-level",dest="help",choices=sorted(HELP),default="none")
     rec.add_argument("--confidence",type=int);rec.add_argument("--approve",action="store_true");rec.set_defaults(func=cmd_record)
     rec.add_argument("--course-id",default=None)
+    rec.add_argument("--session-id",default=None)
     rec.add_argument("--grader-source",choices=sorted(GRADER_SOURCES),default=None)
     rec.add_argument("--confirms",default=None);rec.add_argument("--corrects",default=None)
     rec.add_argument("--corroborates",default=None)
@@ -2888,6 +2911,7 @@ def main():
     ll.add_argument("--unit-id",required=True);ll.add_argument("--kind",required=True,
         choices=sorted(LESSON_ACTIVITY_KINDS))
     ll.add_argument("--note",required=True);ll.add_argument("--courses-root")
+    ll.add_argument("--session-id")
     ll.add_argument("--approve",action="store_true");ll.set_defaults(func=cmd_course_lesson_log)
     ps=cs.add_parser("plan-set");ps.add_argument("--course-id",required=True)
     ps.add_argument("--from-file",required=True);ps.add_argument("--courses-root")
