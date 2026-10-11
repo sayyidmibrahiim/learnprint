@@ -89,6 +89,8 @@ failed independent answer. Follow JOURNEY.md on EVERY /learnprint action.
   delayed active recall before showing any answer; no claim of automated reminders.
 - /learnprint-dashboard: read overview; after standing consent,
   course dashboard --approve can regenerate the derived INDEX.md.
+- /learnprint-syllabus: show course plan and hands-on sequence before tests.
+- /learnprint-practice: guided then independent safe practical activity.
 - /learnprint-assessment and /learnprint-reassessment: method lifecycle above.
 
 ## Competency scope and safe writes
