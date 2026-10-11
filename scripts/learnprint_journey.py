@@ -22,11 +22,12 @@ def validate_units(units, competency_ids):
             raise ValueError("duplicate unit_id " + uid)
         deps = unit.get("requires")
         comps = unit.get("competency_ids")
-        if (not isinstance(deps, list) or not isinstance(comps, list)
-                or not comps or len(deps) != len(set(deps))
-                or len(comps) != len(set(comps))
-                or any(not isinstance(v, str) or not v.strip() for v in deps + comps)):
+        if (not isinstance(deps, list) or not isinstance(comps, list) or not comps
+                or any(not isinstance(v, str) or not v.strip()
+                       for v in deps + comps)):
             raise ValueError("invalid unit dependency/competency IDs")
+        if len(deps) != len(set(deps)) or len(comps) != len(set(comps)):
+            raise ValueError("duplicate unit dependency/competency ID")
         if any(v not in known for v in comps):
             raise ValueError("unknown competency in plan " + uid)
         if unit.get("practice_mode") not in MODES:
