@@ -7,6 +7,17 @@ compatibility: Portable Agent Skills; all operations follow host tool permission
 
 # Learnprint Assess — bounded, evidence-gated
 
+When using the Courses/ workspace, load the unified skill
+skills/learnprint/SKILL.md first. Save each real learner answer through
+learner assessment-record --question QUESTION --answer ANSWER
+--task-type TYPE --approve, using one of the CLI's supported task types.
+On a fresh session, read learner assessment-history before asking anything.
+Use the recorded event UUID in the private candidate profile's observed_task
+evidence source as "assessment-event:UUID". Do not claim assessment completed
+until learner assessment-complete validates the candidate. Never write
+assessment responses into a public template or Git-tracked files.
+
+
 Read `references/ASSESSMENT.md` before administering tasks. If that reference is unavailable, use `prompts/01-assess.md` from the source repository or tell the user the assessment is incomplete.
 
 **Required rules:**

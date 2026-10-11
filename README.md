@@ -141,3 +141,16 @@ No nonstandard Python dependencies. Python 3.9+ recommended. MIT license. Contri
 ### Plugin distribution
 
 For Claude Cowork installations that support custom plugins, see [`distribution/claude-plugin/`](distribution/claude-plugin/) and the separate `learnprint-claude-plugin.zip` release bundle. For ChatGPT accounts that lack native Skills, paste the portable prompts and attach your local Learning State in a Project instead of assuming SKILL.md auto-installs.
+
+
+## Resumable personal assessment evidence
+
+For a private initialized workspace (with actual chat consent),
+learner assessment-start --approve begins a persistent session.
+Save each *actual* learner answer immediately with learner assessment-record
+--question "..." --answer "..." --task-type prior_knowledge --approve.
+After restarting an agent, learner assessment-history returns answers already
+given, so a host without global AgentMemory can resume. Distinct task types
+and source links to the logged event UUIDs are required before
+assessment-complete --approve accepts an evidence-based profile. Responses
+remain in Courses/.learnprint/learner/assessment-events.jsonl, gitignored.

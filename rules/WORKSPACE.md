@@ -50,3 +50,12 @@ remain assessed across hosts sharing private files.
 The fingerprint hashes the protocol and instructional settings, not the
 learner identity or proof of optimal learning. Never silently repair
 personal data, reset stored evidence, or use old agent memories as truth.
+
+## Resumable assessment log
+For an assessment in progress, record EVERY genuine learner response with
+learner assessment-record and a task type. Query learner assessment-history
+before asking further questions; never depend on private host memory.
+Completion verifies multiple distinct logged observations and linkages from
+profile-candidate.json (source assessment-event:<event_id>). The private
+assessment-events.jsonl is not the course learning evidence ledger and
+must never be committed or silently erased.

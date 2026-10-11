@@ -38,6 +38,14 @@ A legacy assessed profile remains assessed even without new metadata.
 Use skills/learnprint-assess/SKILL.md and references/ASSESSMENT.md.
 One question at a time; use real observed learner responses, bounded task count,
 separate stated preferences from measured performance, and never claim fixed learning styles.
+Every actual assessment answer MUST be saved incrementally via
+learner assessment-record --question "..." --answer "actual learner answer"
+--task-type prior_knowledge|mechanism|application|transfer|method_comparison|reflection
+--approve. Read learner assessment-history after a fresh session to avoid
+repeating answered questions. Do not record answers before the learner gives
+them. The private candidate's observed_task evidence source must be
+"assessment-event:<recorded UUID>", with claims linked to those evidence IDs;
+completion requires at least two logged answers from distinct task types.
 Only real evidence-linked candidate profiles may become assessed.
 Write the private candidate file at Courses/.learnprint/learner/profile-candidate.json,
 with the SAME stable profile_id as the current private learner profile.
