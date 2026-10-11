@@ -270,3 +270,24 @@ evidence to reproduce the old bugs.
     tools. Manual host behavior cannot be inferred from CI tests.
 
 See docs/LEARNING-JOURNEY.md for CLI/JSON contract and research context.
+
+## 13. Method visibility and audit, including noncompliance
+
+On a temporary course and default OpenCode (no global plugins):
+1. /learnprint-method should show effective source, language, analogy and
+   other real preferences, revision and v2 fingerprint.
+2. After explicitly approving the learning session, obtain
+   `course session-start --course-id ID --approve` and verify the
+   returned session UUID is echoed in subsequent lesson-log/record calls.
+3. /learnprint-audit should PASS method receipt integrity and any existing
+   linked canonical artifacts; behavioral adherence should remain
+   NOT_VERIFIED, never auto-PASS from agent narration.
+4. On a disposable workspace ONLY, change an active preference after
+   starting a session, then run method-audit. It should detect method
+   drift and report FAIL with nonzero exit (do NOT tamper with real profile).
+5. Missing receipt on a historical course -> NOT_VERIFIED, not FAIL.
+6. Supply a fake transcript saying "I followed everything"; the audit
+   hashes it but MUST NOT certify the teaching behavior as compliant.
+7. Verify both default and customized OpenCode configurations agree on
+   source-of-truth profile/evidence. Human review of actual chat/tool
+   output remains essential to test pedagogy.
