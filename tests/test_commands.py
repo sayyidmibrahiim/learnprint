@@ -161,7 +161,7 @@ class TestPortableCourseOverview(unittest.TestCase):
             self.assertEqual(final["learning_scope"][0]["id"], "joins")
             self.assertEqual(cli("course", "validate", "--courses-root", root).returncode, 0)
             self.assertEqual(read_json(cli("course", "overview", "--courses-root", root))
-                             ["courses"][0]["status"], "scored")
+                             ["courses"][0]["status"], "not_assessed")
 
     def test_scope_set_requires_approval_and_retains_other_state(self):
         with tempfile.TemporaryDirectory() as d:
@@ -179,8 +179,9 @@ class TestPortableCourseOverview(unittest.TestCase):
             self.assertEqual(cli(*cmd).returncode, 2)
             self.assertEqual(cli(*cmd, "--approve").returncode, 0)
             overview = read_json(cli("course", "overview", "--courses-root", root))
-            self.assertEqual(overview["courses"][0]["status"], "scored")
-            self.assertEqual(overview["courses"][0]["progress"]["observed_immediate_coverage_percent"], 0.0)
+            self.assertEqual(overview["courses"][0]["status"], "not_assessed")
+            self.assertIsNone(overview["courses"][0]["progress"])
+            self.assertEqual(overview["courses"][0]["competency_count"], 1)
             saved = json.loads((root / created["rel_path"] / "state.json").read_text(encoding="utf-8"))
             self.assertEqual(saved["course_id"], created["course_id"])
             self.assertEqual(saved["goal"], "interview")
