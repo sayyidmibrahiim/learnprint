@@ -2,9 +2,47 @@
 
 **Portable, evidence-gated adaptive learning skills.** A public starter for assessing what a learner can actually do, generating a local learning profile/skill, and learning any topic with verified sources, concept maps, analogies, hands-on practice, tests, and spaced retrieval.
 
-> Status: **public-ready release candidate**. The founder profile reflects a real but informal conversational assessment; it is **not** a clinical, neurological, psychometric, or scientifically validated optimal learning style. No platform-specific execution test has been performed in a real client. See [VALIDATION.md](docs/VALIDATION.md).
+> Status: **public-ready release candidate**. The founder profile reflects a real but informal conversational assessment; it is **not** a clinical, neurological, psychometric, or scientifically validated optimal learning style. Cross-platform Python CLI tests have passed; full live learning remains subject to user acceptance on each host. See [VALIDATION.md](docs/VALIDATION.md).
 
-## Start here
+## Quick start: OpenCode without global customizations
+
+Clone the repository, open its root in a standard OpenCode installation,
+then type /learnprint. The tracked .opencode/commands/ and .agents/skills/
+directories supply the command suite and portable orchestrator. No global
+AgentMemory, JEV, Graphify, MCP integration, API key or installation step
+is required for this project-local workflow.
+
+Commands: /learnprint, /learnprint-learn TOPIC,
+/learnprint-continue-learn, /learnprint-assessment,
+/learnprint-reassessment, /learnprint-test, /learnprint-progress,
+/learnprint-review, /learnprint-dashboard, /learnprint-help.
+
+Natural-language equivalents work through AGENTS.md on compatible hosts.
+The entry point is READ-ONLY until the user explicitly approves private
+Courses/ initialization. Unassessed users are offered two choices ONCE:
+personal method assessment, or temporarily use the founder default.
+Deferral is persistent; reassessment is opt-in. An existing private
+profile and fingerprint are loaded across sessions and models sharing
+the same Courses/ directory.
+
+For inspection in a terminal (read-only, no global dependencies):
+
+    python scripts/learnprint.py learner status
+    python scripts/learnprint.py course overview
+
+Method-changing commands require a live scoped workspace grant and
+--approve. The fingerprint identifies instructional settings (not a
+person or innate learning type); assessment needs real evidence-linked
+responses, never auto-generated claims. /learnprint-continue-learn
+lists ALL courses with canonical paths and evidence-derived statuses;
+INVALID state remains visible as an error rather than fake progress.
+
+If a prior agent wrote competencies with only id/status, the course's
+state is incomplete. Validate it and repair privately, preserving
+actual evidence; use course scope-set for new verified competency lists.
+See docs/USER-ACCEPTANCE-TEST.md.
+
+## Earlier low-level workflows (still supported)
 
 1. **First-time learner:** open [`prompts/01-assess.md`](prompts/01-assess.md), or invoke the `learnprint-assess` skill. Answer an initial goal/prior-knowledge check. The assessment is bounded, identifies misconceptions, compares teaching aids only where justified, and saves an evidence-linked profile.
 2. **Learn a topic:** open [`prompts/02-learn.md`](prompts/02-learn.md), or invoke `learnprint-learn`: `Belajar: in/on/at` or `Belajar: Docker`. The tutor loads your local profile if available; otherwise it uses the anonymized founder default.

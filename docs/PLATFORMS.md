@@ -35,3 +35,16 @@ The source also contains `distribution/claude-plugin/` with `.claude-plugin/plug
 
 ## Course workspace hosts (AGENTS.md, Oct 2026 corrections)
 AGENTS.md is canonical and loads natively on OpenCode v2, Codex CLI, Claude Code (built-in mod), Kiro (steering), and Antigravity. Gemini CLI needs GEMINI.md (`@./AGENTS.md` import) unless `context.fileName` is configured — it is the only host needing an adapter. Antigravity loads both files (~40 lines duplication, tolerable; delete GEMINI.md if context is tight). Host compatibility is claimed only after the per-host checklist passes on that host — never from documented discovery paths alone.
+
+## Learnprint command suite (2026-10-11)
+
+On a fresh OpenCode checkout, .opencode/commands/ offers /learnprint,
+learn, continue-learn, assessment, reassessment, test, progress, review,
+dashboard and help, all prefixed learnprint. Native discovery uses the
+bundled .agents/skills/{learnprint,learnprint-assess,learnprint-learn}/ tree;
+source equivalents are in skills/. No global customization is necessary.
+
+For other hosts, the portable orchestrator is the SKILL.md contract.
+Install via scripts/install.py only with explicit authorization, or
+follow AGENTS.md and source SKILL.md via natural language. Identical slash
+command availability in other host UIs is NOT implied.

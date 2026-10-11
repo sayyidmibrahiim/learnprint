@@ -12,7 +12,7 @@ TARGETS = {
     "gemini": ".gemini/skills", "kiro": ".kiro/skills", "antigravity": ".agents/skills",
 }
 PERSONAL_SKILL = "learnprint-personal"
-PACKAGED_SKILLS = ("learnprint-assess", "learnprint-learn")
+PACKAGED_SKILLS = ("learnprint", "learnprint-assess", "learnprint-learn")
 
 HOOK_SCRIPT = """#!/bin/sh
 # Learnprint privacy guard: reject staged learner data.
