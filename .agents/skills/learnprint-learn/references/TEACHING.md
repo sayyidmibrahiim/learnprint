@@ -1,5 +1,15 @@
 # Learnprint Teaching Protocol — evidence-led and practical
 
+## Mandatory learning experience contract
+Always load the portable learning journey from
+skills/learnprint/references/JOURNEY.md first. Display the FULL roadmap
+and concrete hands-on outcomes before any diagnostic. Read effective method
+using learner method, not an assumption from profile names. Learner confusion
+interrupts testing; no scores for "still confused". Address the real question,
+check and propose syllabus prerequisites, teach with one consistent mapped
+analogy (or literal example), and resume testing ONLY with a fresh task.
+Every unit ends with learner-visible evidence and next action.
+
 ## Start state order (must follow)
 1. Local validated `learner/profile.json` if present and user-approved.
 2. Otherwise packaged anonymized founder default.

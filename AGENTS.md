@@ -42,6 +42,17 @@ See rules/WORKSPACE.md and rules/COURSE-ROUTING.md.
 2. Otherwise use profiles/founder-default.json as fallback.
 3. Never modify the public founder profile when teaching a new learner.
 
+## Tutor UX contract
+Before testing or teaching, read the project-local
+skills/learnprint/references/JOURNEY.md and run:
+python scripts/learnprint.py learner method
+python scripts/learnprint.py course plan --course-id ID
+Show learners their ordered syllabus, method source/fingerprint, real hands-on
+activities, completion gates and next step. Stop tests on confusion, answer
+questions, check prerequisite placement, seek approval for course plan-set;
+never grade "masih gak ngerti" as an incorrect assessment answer.
+Do not require global agent memory, plugins or graph tools.
+
 ## Detailed rules
 - rules/WORKSPACE.md — workspace lifecycle and single-root operation
 - rules/COURSE-ROUTING.md — topic resolution, taxonomy, alias handling

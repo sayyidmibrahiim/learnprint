@@ -56,6 +56,15 @@ An in-progress reassessment must not erase or override the previous assessed pro
 Fingerprint is a deterministic hash of instructional settings + protocol, NOT identity,
 scientific proof of an optimal method, or proof that assessment actually happened.
 
+## Non-optional learning journey
+Before the first diagnostic or lesson, load skills/learnprint/references/JOURNEY.md
+(or local references/JOURNEY.md). Run learner method, report actual settings
+source/fingerprint, then course plan and SHOW the learner what they will learn,
+why, prerequisite order, hands-on tasks and measurable success checks.
+When confused, pause testing, inspect and if necessary propose syllabus
+prerequisite changes with approval. Never grade "I don't understand" as a
+failed independent answer. Follow JOURNEY.md on EVERY /learnprint action.
+
 ## Actions
 - /learnprint or /learnprint-help: show method status and action menu; no writes.
 - /learnprint-learn TOPIC: resolve in registry first, reuse exact course ID/aliases.
@@ -80,6 +89,8 @@ scientific proof of an optimal method, or proof that assessment actually happene
   delayed active recall before showing any answer; no claim of automated reminders.
 - /learnprint-dashboard: read overview; after standing consent,
   course dashboard --approve can regenerate the derived INDEX.md.
+- /learnprint-syllabus: show course plan and hands-on sequence before tests.
+- /learnprint-practice: guided then independent safe practical activity.
 - /learnprint-assessment and /learnprint-reassessment: method lifecycle above.
 
 ## Competency scope and safe writes

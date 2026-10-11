@@ -345,6 +345,10 @@ LOCK_TABLE = {
     "course dashboard": {"mutates": True, "locks": True},
     "course resolve": {"mutates": False, "locks": False},
     "course list": {"mutates": False, "locks": False},
+    "learner method": {"mutates": False, "locks": False},
+    "course plan": {"mutates": False, "locks": False},
+    "course plan-set": {"mutates": True, "locks": True},
+    "course lesson-log": {"mutates": True, "locks": True},
     "report": {"mutates": False, "locks": False},
 }
 
@@ -1562,6 +1566,33 @@ def learner_method_status(root):
             "course_count": len(registry.get("courses", []))}
 
 
+def effective_method(root):
+    """Read-only effective instruction settings with verifiable fingerprint."""
+    status = learner_method_status(root)
+    if status["workspace"] == "not_initialized":
+        settings = load(ROOT / "profiles/founder-default.json")["instruction_defaults"]
+        source = "founder_default"
+    else:
+        private = _read_local_profile(root)
+        if private["assessment_status"] in {"assessed", "provisional"}:
+            settings = private["instruction_defaults"]
+            source = "personal_assessment" if private["assessment_status"] == "assessed" else "personal_provisional"
+        else:
+            settings = load(ROOT / "profiles/founder-default.json")["instruction_defaults"]
+            source = "founder_default"
+    fingerprint = method_fingerprint(settings)
+    if fingerprint != status["method_fingerprint"] or not status.get("stored_fingerprint_matches", True):
+        raise ValueError("effective method fingerprint mismatch: inspect profile before teaching")
+    return {"source": source, "fingerprint": fingerprint,
+            "instruction_defaults": settings, "assessment_status": status["assessment_status"],
+            "verification": "settings resolved; tutor adherence must be checked in live session"}
+
+
+def cmd_learner_method(a):
+    print(json.dumps(effective_method(_courses_root(a)), ensure_ascii=False, indent=2))
+    return 0
+
+
 def cmd_learner_status(a):
     print(json.dumps(learner_method_status(_courses_root(a)), ensure_ascii=False, indent=2))
     return 0
@@ -1774,6 +1805,167 @@ def cmd_course_scope_set(a):
     return 0
 
 
+def _journey_module():
+    try:
+        import learnprint_journey
+        return learnprint_journey
+    except ImportError:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "learnprint_journey", ROOT / "scripts" / "learnprint_journey.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+
+def _registered_course(root, course_id):
+    registry = registry_read(root)
+    selected = next((c for c in registry.get("courses", [])
+                     if c.get("course_id") == course_id), None)
+    if selected is None:
+        raise ValueError("unknown course_id: " + course_id)
+    return selected, root / selected["rel_path"] / "state.json", registry
+
+
+LESSON_ACTIVITY_KINDS = {"covered", "practice", "question", "clarification"}
+
+
+def _lesson_activity(course_directory):
+    """Private tutor-reported coverage, NEVER mastery evidence."""
+    path = course_directory / "learning-log.jsonl"
+    if not path.exists():
+        return []
+    raw = path.read_bytes()
+    if raw and not raw.endswith(b"\n"):
+        raise ValueError("learning-log missing terminal newline")
+    rows, ids = [], set()
+    for index, line in enumerate(raw.split(b"\n"), 1):
+        if not line:
+            continue
+        try:
+            item = json.loads(line.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise ValueError(f"invalid learning-log row {index}: {exc}")
+        if (not isinstance(item, dict) or item.get("kind") not in LESSON_ACTIVITY_KINDS
+                or not isinstance(item.get("note"), str) or not item["note"].strip()
+                or not isinstance(item.get("unit_id"), str)
+                or not isinstance(item.get("event_id"), str) or item["event_id"] in ids):
+            raise ValueError(f"invalid learning-log row {index}")
+        ids.add(item["event_id"])
+        rows.append(item)
+    return rows
+
+
+def cmd_course_lesson_log(a):
+    """Record what was actually discussed; never assign a competence score."""
+    root = _courses_root(a)
+    _require(a, root, "state-update")
+    if not a.note.strip():
+        raise ValueError("lesson note must not be empty")
+    with workspace_lock(root):
+        c, path, _ = _registered_course(root, a.course_id)
+        state = load(path)
+        scope = _validated_course_scope(state, a.course_id, path)
+        units = state.get("syllabus", [])
+        if not units:
+            raise ValueError("adopt structured syllabus before logging lesson coverage")
+        _journey_module().validate_units(units, [x["id"] for x in scope])
+        if a.unit_id not in {u["unit_id"] for u in units}:
+            raise ValueError("unknown lesson unit_id: " + a.unit_id)
+        target = path.parent / "learning-log.jsonl"
+        _lesson_activity(path.parent)
+        event = {"event_id": str(uuid.uuid4()), "unit_id": a.unit_id,
+                 "kind": a.kind, "note": a.note,
+                 "recorded_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                 "source": "agent_reported_not_assessment"}
+        append_event_line(target, json.dumps(event, ensure_ascii=False))
+    print(json.dumps(event, ensure_ascii=False))
+    return 0
+
+
+def cmd_course_plan(a):
+    """Read-only: show what will be learned before any diagnostic or test."""
+    root = _courses_root(a)
+    c, path, registry = _registered_course(root, a.course_id)
+    state = load(path)
+    scope = _validated_course_scope(state, c["course_id"], path)
+    units = state.get("syllabus", [])
+    if not isinstance(units, list):
+        raise ValueError("invalid syllabus in state.json")
+    activity = _lesson_activity(path.parent)
+    unit_ids = {v["unit_id"] for v in units if isinstance(v, dict) and "unit_id" in v}
+    if any(v["unit_id"] not in unit_ids for v in activity):
+        raise ValueError("learning activity references absent plan unit")
+    output = {"course_id": c["course_id"], "title": c["title"],
+              "goal": state.get("goal") or c.get("goal"),
+              "method": effective_method(root), "units": [],
+              "syllabus_status": "structured" if units else "needs_adoption"}
+    if units:
+        ordered = _journey_module().validate_units(units, [x["id"] for x in scope])
+        index = {u["unit_id"]: u for u in units}
+        ledger = ledger_read_trusted(root / ".learnprint" / "events.jsonl",
+                                     workspace_root=root)
+        result = progress({"topic_id": c.get("topic_id") or c["course_id"],
+                           "learning_scope": scope}, ledger, registry=registry)
+        by_id = {x["id"]: x for x in result["competencies"]}
+        for uid in ordered:
+            unit = dict(index[uid])
+            actual = [e for e in activity if e["unit_id"] == uid]
+            unit["activity_count"] = len(actual)
+            unit["last_discussed"] = actual[-1]["recorded_at"] if actual else None
+            unit["coverage_is"] = "agent_reported_not_mastery" if actual else "not_reported"
+            details = [by_id[x] for x in unit["competency_ids"]]
+            unit["evidence_status"] = (
+                "maintained" if all(x["status"] == "maintained" for x in details)
+                else "immediate_demonstrated" if all(
+                    x["independent_pass_application"] and x["independent_pass_transfer"]
+                    for x in details)
+                else "in_progress" if any(x["observations"] for x in details)
+                else "not_assessed")
+            output["units"].append(unit)
+        output["course_completion"] = (
+            "maintained" if result["competencies"] and all(
+                x["status"] == "maintained" for x in result["competencies"])
+            else "not_yet_maintained")
+    else:
+        legacy = path.parent / "SYLLABUS.md"
+        output["legacy_syllabus_preview"] = (
+            legacy.read_text(encoding="utf-8")[:20000] if legacy.is_file() else None)
+        output["course_completion"] = "unknown_no_structured_plan"
+    output["recent_learning_activity"] = activity[-10:]
+    print(json.dumps(output, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_course_plan_set(a):
+    """Approved, validated plan update. Back up prior state; never erase evidence."""
+    root = _courses_root(a)
+    _require(a, root, "state-update")
+    with workspace_lock(root):
+        c, path, _registry = _registered_course(root, a.course_id)
+        current = load(path)
+        scope = _validated_course_scope(current, c["course_id"], path)
+        proposed = load(a.from_file)
+        helper = _journey_module()
+        helper.validate_units(proposed, [x["id"] for x in scope])
+        helper.preserve_existing(current.get("syllabus", []), proposed)
+        updated = dict(current)
+        updated["syllabus"] = proposed
+        # Each edit has a distinct immutable prior-state snapshot.
+        old = path.read_bytes()
+        name = ("state.before-plan-" + dt.datetime.now(dt.timezone.utc)
+                .strftime("%Y%m%dT%H%M%S%fZ") + ".json")
+        backup = path.with_name(name)
+        if backup.exists():
+            raise ValueError("refusing to overwrite existing plan backup")
+        atomic_write_bytes(backup, old)
+        atomic_write(path, json.dumps(updated, ensure_ascii=False, indent=2) + "\n")
+    print(json.dumps({"status": "updated", "course_id": a.course_id,
+                      "units": len(proposed), "backup": str(backup)},
+                     ensure_ascii=False))
+    return 0
+
+
 def cmd_course_list(a):
     root = _courses_root(a)
     registry = registry_read(root)
@@ -1904,7 +2096,16 @@ def collect_workspace_problems(root, registry):
             problems.append(f"unreadable state.json for course {c.get('course_id')}: {exc}")
             continue
         try:
-            _validated_course_scope(st, c.get("course_id"), sp)
+            scope = _validated_course_scope(st, c.get("course_id"), sp)
+            syllabus = st.get("syllabus", [])
+            if not isinstance(syllabus, list):
+                raise ValueError("syllabus must be a list")
+            if syllabus:
+                _journey_module().validate_units(syllabus, [x["id"] for x in scope])
+            activities = _lesson_activity(sp.parent)
+            valid_ids = {v["unit_id"] for v in syllabus}
+            if any(v["unit_id"] not in valid_ids for v in activities):
+                raise ValueError("learning activity references absent plan unit")
         except (ValueError, TypeError) as exc:
             problems.append(f"invalid course state for {c.get('rel_path')}: {exc}")
     active = registry.get("active_course_id")
@@ -2548,6 +2749,16 @@ def main():
     mv.set_defaults(func=cmd_course_move)
     cl=cs.add_parser("list");cl.add_argument("--courses-root");cl.set_defaults(func=cmd_course_list)
     ov=cs.add_parser("overview");ov.add_argument("--courses-root");ov.set_defaults(func=cmd_course_overview)
+    journey=cs.add_parser("plan");journey.add_argument("--course-id",required=True)
+    journey.add_argument("--courses-root");journey.set_defaults(func=cmd_course_plan)
+    ll=cs.add_parser("lesson-log");ll.add_argument("--course-id",required=True)
+    ll.add_argument("--unit-id",required=True);ll.add_argument("--kind",required=True,
+        choices=sorted(LESSON_ACTIVITY_KINDS))
+    ll.add_argument("--note",required=True);ll.add_argument("--courses-root")
+    ll.add_argument("--approve",action="store_true");ll.set_defaults(func=cmd_course_lesson_log)
+    ps=cs.add_parser("plan-set");ps.add_argument("--course-id",required=True)
+    ps.add_argument("--from-file",required=True);ps.add_argument("--courses-root")
+    ps.add_argument("--approve",action="store_true");ps.set_defaults(func=cmd_course_plan_set)
     scope=cs.add_parser("scope-set");scope.add_argument("--course-id",required=True)
     scope.add_argument("--from-file",required=True);scope.add_argument("--courses-root")
     scope.add_argument("--approve",action="store_true");scope.set_defaults(func=cmd_course_scope_set)
@@ -2571,6 +2782,7 @@ def main():
     learner=sub.add_parser("learner")
     lm=learner.add_subparsers(dest="learner_cmd",required=True)
     st=lm.add_parser("status");st.add_argument("--courses-root");st.set_defaults(func=cmd_learner_status)
+    met=lm.add_parser("method");met.add_argument("--courses-root");met.set_defaults(func=cmd_learner_method)
     default=lm.add_parser("use-default");default.add_argument("--courses-root")
     default.add_argument("--approve",action="store_true");default.set_defaults(func=cmd_learner_default)
     start=lm.add_parser("assessment-start");start.add_argument("--courses-root")

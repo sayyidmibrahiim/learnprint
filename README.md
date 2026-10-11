@@ -154,3 +154,32 @@ given, so a host without global AgentMemory can resume. Distinct task types
 and source links to the logged event UUIDs are required before
 assessment-complete --approve accepts an evidence-based profile. Responses
 remain in Courses/.learnprint/learner/assessment-events.jsonl, gitignored.
+
+## Learning journey: what you will learn and how progress is proven
+
+The project-local `/learnprint-syllabus` shows the full course roadmap
+BEFORE a topic diagnostic, with outcomes, prerequisites, ordered modules,
+hands-on exercises, success checks and evidence status. The tutor should also
+show this automatically when starting/resuming a course.
+`/learnprint-practice` starts a safe, concrete practical activity
+appropriate to the topic (code, physical, conversation, or written task).
+`/learnprint-test` uses separate independent application/novel transfer,
+and retention review remains a later test.
+
+Read-only terminal checks from repo root:
+
+    python scripts/learnprint.py learner method
+    python scripts/learnprint.py course plan --course-id YOUR-COURSE-UUID
+
+After explicit workspace consent, a proposed structured syllabus can be
+validated and applied with:
+
+    python scripts/learnprint.py course plan-set --course-id YOUR-COURSE-UUID --from-file CANDIDATE.json --approve
+
+The original plan is backed up; existing unit identities and evidence are
+preserved. If your course has only a legacy SYLLABUS.md, the CLI displays
+that draft instead of claiming a structured syllabus exists.
+Full contract, examples and researched rationale:
+[Learning Journey](docs/LEARNING-JOURNEY.md);
+[Python vs Go/Rust decision](docs/ENGINE-LANGUAGE-DECISION.md).
+

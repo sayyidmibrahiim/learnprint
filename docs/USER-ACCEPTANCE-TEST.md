@@ -234,3 +234,39 @@ with no global custom skills or memory providers:
 
 This section defines user acceptance; automated tests only prove CLI and
 packaging behavior, NOT live semantic model or pedagogical quality.
+
+## 12. Live tutoring regression: roadmap, confusion, hands-on, test
+
+Perform this in a disposable local course; do NOT erase existing learner
+evidence to reproduce the old bugs.
+
+1. Start /learnprint-learn or /learnprint-continue-learn. Before a quiz,
+   the agent must run learner method and course plan, SHOW method source,
+   fingerprint and a real ordered syllabus (or visibly proposed draft).
+2. Check at least one real-world practical task per syllabus unit, its
+   input, output, verification and measurable success criterion.
+3. Say "Gak ngerti gw maksudlu probe" at the diagnostic. Expect a
+   simple explanation and one small question at a time, NOT an automatic
+   scored failure or a complex JOIN exercise.
+4. Ask for a concept missing from the syllabus. The agent should show
+   whether it belongs to an existing unit or propose a new prerequisite
+   with before/after position and ask approval before plan-set.
+5. Say "masih gak ngerti" after a weak analogy. The agent must pause
+   tests, identify the actual misunderstanding and use a consistent
+   literal explanation / concrete demonstration, not randomly swap
+   metaphor domains or record the statement as a 0-score test.
+6. Ask /learnprint-practice to perform an actual local safe SQL example
+   (e.g., SQLite in-memory SELECT, only if available); verify observed
+   output. Denied tool access must be reported, not fabricated.
+7. Request /learnprint-test only after teaching. Verify independent
+   application and novel transfer are different fresh tasks, with
+   criterion-level rubric and real learner answer recorded.
+8. Request /learnprint-progress; it must be provisional where
+   AI-graded. A completed unit must NOT be called permanent mastery
+   without actual delayed retrieval evidence.
+9. Start a new host session; method fingerprint, syllabus, events and
+   next unit should be read from local Courses/ rather than agent memory.
+10. Repeat on a standard OpenCode install without global memory/graph
+    tools. Manual host behavior cannot be inferred from CI tests.
+
+See docs/LEARNING-JOURNEY.md for CLI/JSON contract and research context.

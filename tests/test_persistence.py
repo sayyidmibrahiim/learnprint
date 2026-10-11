@@ -188,29 +188,27 @@ class TestLedgerIntegrity(unittest.TestCase):
 
     def test_repair_refuses_overwrite_existing_backup(self):
         import tempfile
+        from unittest.mock import patch
+        # Freeze the backup timestamp to test collision deterministically;
+        # otherwise a test spanning two UTC seconds can spuriously pass/fail.
+        class FixedDatetime(mod.dt.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return cls(2026, 10, 11, 6, 0, 0, tzinfo=tz)
         with tempfile.TemporaryDirectory() as d:
             p = write_ledger(d)
-            with p.open("ab") as fh:
-                fh.write(b'{"truncated": tru')
-            # Simulate a repeated repair within the same second: pre-create
-            # every backup name this original could produce is impractical;
-            # instead verify the guard by repairing twice after restoring.
-            mod.ledger_repair_truncate_partial_tail(p)
-            first = list(Path(d).glob("events.jsonl.bak.*"))
-            self.assertEqual(len(first), 1)
-            # Re-damage identically and force the same timestamped name to exist.
-            with p.open("ab") as fh:
-                fh.write(b'{"truncated": tru')
-            raw = p.read_bytes()
-            sha8 = hashlib.sha256(raw).hexdigest()[:8]
-            clash = [b for b in Path(d).glob(f"events.jsonl.bak.*.{sha8}")]
-            if clash:
+            with patch.object(mod.dt, "datetime", FixedDatetime):
+                with p.open("ab") as fh:
+                    fh.write(b'{"truncated": tru')
+                mod.ledger_repair_truncate_partial_tail(p)
+                first = list(Path(d).glob("events.jsonl.bak.*"))
+                self.assertEqual(len(first), 1)
+                original_backup_bytes = first[0].read_bytes()
+                with p.open("ab") as fh:
+                    fh.write(b'{"truncated": tru')
                 with self.assertRaises(mod.LedgerDamage):
                     mod.ledger_repair_truncate_partial_tail(p)
-            else:
-                # Different second: a second backup is created, first untouched.
-                mod.ledger_repair_truncate_partial_tail(p)
-                self.assertEqual(len(list(Path(d).glob("events.jsonl.bak.*"))), 2)
+                self.assertEqual(first[0].read_bytes(), original_backup_bytes)
 
     def test_repair_audit_carries_pre_post_hashes(self):
         import tempfile
