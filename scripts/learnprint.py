@@ -2227,10 +2227,11 @@ def cmd_course_resume(a):
     root = _courses_root(a)
     registry = registry_read(root)
     courses = registry.get("courses", [])
-    if a.course_id:
-        selected = next((c for c in courses if c["course_id"] == a.course_id), None)
+    selected_id = getattr(a, "course_id", None)
+    if selected_id:
+        selected = next((c for c in courses if c["course_id"] == selected_id), None)
         if selected is None:
-            raise ValueError("unknown course_id: " + a.course_id)
+            raise ValueError("unknown course_id: " + selected_id)
         print(json.dumps({"status": "found", "course": selected}, ensure_ascii=False, indent=2))
         return 0
     if not courses:
