@@ -1,0 +1,78 @@
+{
+  "schema_version": "1.0",
+  "profile_id": "founder-default-anonymized",
+  "assessment_status": "provisional",
+  "public_template": true,
+  "locale": "id-ID",
+  "display_name": "Anonymous founding learner",
+  "evidence_quality": "moderate",
+  "disclaimer": "Derived from informal conversational tasks with leading prompts and unequal prior knowledge; not a validated psychometric measure or proven optimal learning style.",
+  "preferences": {
+    "language": "Indonesian, direct, conversational, technically accurate",
+    "analogies": "Prefer close everyday/work examples; explicitly map corresponding components and state where analogy breaks.",
+    "visuals": "Prefer functional diagrams (state, causal, flow, prerequisites) when useful; do not require decorative visuals.",
+    "feedback": "Objective corrections, no sycophancy; tutor should acknowledge ambiguous questions and its own mistakes.",
+    "progress": "Practical syllabus, testable mastery gates, hands-on work, spaced retrieval and portable state."
+  },
+  "observed_claims": [
+    {
+      "id": "C01",
+      "claim": "Frequently asks for the purpose, constraints, and rationale behind technical rules before accepting the mechanism.",
+      "category": "observed",
+      "evidence_ids": ["E01", "E02"]
+    },
+    {
+      "id": "C02",
+      "claim": "Often draws on prior experience to build an explanation and can revise a solution when constraints become explicit.",
+      "category": "observed",
+      "evidence_ids": ["E03", "E04"]
+    },
+    {
+      "id": "C03",
+      "claim": "Circuit-breaker terminology was initially confusing; a circuit analogy and familiar API scenario supported a correct subsequent answer.",
+      "category": "observed",
+      "evidence_ids": ["E05", "E06"]
+    },
+    {
+      "id": "C04",
+      "claim": "English time prepositions were often correctly selected while spontaneous phrasing and collocations were less reliable in short meeting updates.",
+      "category": "observed",
+      "evidence_ids": ["E07"]
+    },
+    {
+      "id": "C05",
+      "claim": "The learner reports that precise diagrams, familiar analogies, and plain language help comprehension.",
+      "category": "reported_preference",
+      "evidence_ids": ["E08"]
+    }
+  ],
+  "evidence": [
+    {"id": "E01", "origin": "observed_task", "description": "Asked for the basis of a three-concurrent-jobs limit before implementing a semaphore", "verification": "observed", "source": "anonymized prior learning conversation"},
+    {"id": "E02", "origin": "observed_task", "description": "Questioned why a thermostat should switch ON/OFF before accepting hysteresis design", "verification": "observed", "source": "anonymized prior learning conversation"},
+    {"id": "E03", "origin": "observed_task", "description": "Applied hysteresis from thermostat to water-pump levels, using preceding state", "verification": "observed", "source": "anonymized prior learning conversation"},
+    {"id": "E04", "origin": "observed_task", "description": "Revised simple backup design into version-preserving copies once change-timing constraints were clarified", "verification": "observed", "source": "anonymized prior learning conversation"},
+    {"id": "E05", "origin": "observed_task", "description": "Initially found CLOSED/OPEN labels counterintuitive and could not infer circuit-breaker behavior", "verification": "observed", "source": "anonymized prior learning conversation"},
+    {"id": "E06", "origin": "observed_task", "description": "Correctly predicted OPEN prevents external API calls after circuit analogy explanation", "verification": "observed", "source": "anonymized prior learning conversation"},
+    {"id": "E07", "origin": "observed_task", "description": "Meeting updates used time prepositions correctly but included 'apply the fixing' and unnatural word order", "verification": "observed", "source": "anonymized prior learning conversation"},
+    {"id": "E08", "origin": "self_report", "description": "Learner explicitly prefers accurate diagrams and close, plainly worded analogies", "verification": "reported", "source": "anonymized prior learning conversation"}
+  ],
+  "instruction_defaults": {
+    "prerequisite_probe_max": 3,
+    "teach_one_unit_at_a_time": true,
+    "prefer_real_goal_first_when_unknown": true,
+    "define_new_terms_before_test": true,
+    "analogy_with_limits": true,
+    "diagram_if_structurally_useful": true,
+    "mechanism_and_tradeoffs": true,
+    "worked_then_faded_practice": true,
+    "independent_transfer_test": true,
+    "spaced_retrieval_default": true,
+    "review_intervals_days_start": [1, 3, 7, 21],
+    "maximum_unresolved_questions_per_unit": 3
+  },
+  "unknowns": [
+    "No controlled finding that concept-first, problem-first or diagrams are universally superior for this learner.",
+    "Long-term retention after an independently scheduled multi-day interval has not been measured.",
+    "Topic-specific strengths require a fresh diagnostic."
+  ]
+}

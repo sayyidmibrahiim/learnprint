@@ -33,4 +33,8 @@ The learner may request 'why' questions at any point. Triage `blocking`, `releva
 Use 1d, 3d, 7d, 21d as *suggested initial intervals*, updated according to observed difficulty and gaps. Each review requires active recall without seeing answer, novel enough examples, and feedback. If no scheduler, write review queue only; do not claim reminders will fire.
 
 ## Portability
-After each session, update `manifest.json`, one `topics/<slug>/state.json`, `events.jsonl`, `reviews.json` and a concise human-readable handoff. If filesystem unavailable, output a portable `LEARNING_STATE` block the learner can save. Never claim an artifact was written unless a tool verifies it. Use small-context recovery rather than relying on long conversation history.
+For the canonical Courses/ workspace, use the deterministic CLI to update
+the current course's state.json (via validated scope-set where applicable),
+Courses/.learnprint/events.jsonl and the review queue, plus the course HANDOFF.md.
+The older manifest.json/topics layout applies only to legacy workspaces,
+not new Courses/ learners. If filesystem unavailable, output a portable `LEARNING_STATE` block the learner can save. Never claim an artifact was written unless a tool verifies it. Use small-context recovery rather than relying on long conversation history.

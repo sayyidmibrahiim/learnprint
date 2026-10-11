@@ -29,3 +29,33 @@ HANDOFF.md, state.json. `Courses/INDEX.md` is derived, never source of truth.
 ## Tiers without filesystem (Tier 0)
 If the host denies writes: teach in chat, output a portable LEARNING_STATE
 block, never claim a file write happened.
+
+## Personal method, command navigation and evidence
+
+Read-only status: learner status, course overview. Neither initializes a
+fresh workspace. After chat consent, initialize exactly once, then offer
+method assessment or the temporary founder default. Saving "deferred"
+means do not ask automatically on every session. Assessed profiles
+remain assessed across hosts sharing private files.
+
+- learner use-default --approve: persist temporary default, NOT assessed.
+- learner assessment-start --approve: start personal assessment.
+- learner assessment-start --reassess --approve: explicitly recalibrate.
+- learner assessment-complete --approve: validate private
+  learner/profile-candidate.json and advance fingerprint/revision.
+- course overview: inspect all courses and real progress from the ledger.
+- course scope-set --course-id ID --from-file FILE --approve: safely
+  replace a validated competency scope, never remove referenced IDs.
+
+The fingerprint hashes the protocol and instructional settings, not the
+learner identity or proof of optimal learning. Never silently repair
+personal data, reset stored evidence, or use old agent memories as truth.
+
+## Resumable assessment log
+For an assessment in progress, record EVERY genuine learner response with
+learner assessment-record and a task type. Query learner assessment-history
+before asking further questions; never depend on private host memory.
+Completion verifies multiple distinct logged observations and linkages from
+profile-candidate.json (source assessment-event:<event_id>). The private
+assessment-events.jsonl is not the course learning evidence ledger and
+must never be committed or silently erased.

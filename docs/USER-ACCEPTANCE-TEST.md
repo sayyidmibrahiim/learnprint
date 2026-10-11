@@ -201,3 +201,36 @@ git status --short                                    # Courses/ must never appe
 - The LLM classified every topic perfectly (check `course list` paths).
 - The pedagogy is optimal (that is a human judgment per unit).
 - Zero defects remain (report issues with exact commands + output).
+
+
+## 11. New Learnprint command suite (manual, project-local)
+
+On a **fresh default OpenCode install** in the Learnprint repository root,
+with no global custom skills or memory providers:
+
+1. Run /learnprint. It should read method status, show assessment vs
+   founder-default choice when needed, and NOT create Courses/ before
+   explicit chat approval.
+2. Approve initialization only after the scope is stated. Choose the default
+   method; close and reopen the agent; /learnprint must NOT ask again.
+3. On a disposable learner workspace, start /learnprint-assessment.
+   Answer two different types of real questions; after a new session, the
+   agent must use learner assessment-history and must not re-ask the same
+   completed questions. It may not claim the method is assessed until a
+   valid evidence-linked private candidate is applied.
+4. Invoke /learnprint-continue-learn; expect real listed course IDs,
+   paths and evidence-based status, never invented percentages.
+5. Invoke /learnprint-test, /learnprint-progress, /learnprint-review,
+   /learnprint-dashboard and /learnprint-help. Check honest behavior for
+   missing workspace, no evidence, unavailable CLI and denied writes.
+6. Verify that /learnprint-reassessment leaves the active assessed profile
+   unchanged until a fully validated candidate is completed.
+7. Compare behavior with and without custom global OpenCode plugins.
+   Local Courses/ data is canonical in BOTH cases.
+8. If a legacy course state has competency IDs without names, expect
+   state_invalid rather than fake progress. Repair privately via
+   course scope-set with the same IDs and accurate names; never delete
+   existing evidence or re-init a populated workspace.
+
+This section defines user acceptance; automated tests only prove CLI and
+packaging behavior, NOT live semantic model or pedagogical quality.

@@ -7,6 +7,8 @@ compatibility: Portable Agent Skills; use filesystem tools only with explicit pe
 
 # Learnprint Learn — evidence-first adaptive tutor
 
+For first-run onboarding, use skills/learnprint/SKILL.md before teaching. Never infer initial consent or assessment from a learning request.
+
 Read `references/TEACHING.md` and use `references/founder-default.json` **only if no valid local personal profile exists**. If a personal profile is approved in the user's local workspace, it overrides the founder default; do not modify the public template.
 
 Execution gates:

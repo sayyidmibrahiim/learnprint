@@ -12,6 +12,23 @@ This is Learnprint: a portable, evidence-gated adaptive learning workspace.
 7. Use authoritative citations; distinguish official docs from assumptions.
 8. Do not modify the public founder profile for new learners.
 
+## Unified Learnprint entry
+
+Every Learnprint natural-language learning request or /learnprint* command
+MUST load the repository's project-local orchestrator skill:
+.agents/skills/learnprint/SKILL.md (fallback: skills/learnprint/SKILL.md).
+The default OpenCode clone includes local slash commands and native skills;
+do not require global memory, JEV, Graphify, extra agents or plug-ins.
+First read learner status and course overview WITHOUT creating files.
+Learning intent is NOT permission to initialize Courses/. Request explicit
+chat approval for the bounded private workspace before course init --approve.
+Offer personal method assessment vs founder default ONCE; persist deferral.
+Never repeat assessment for an already-assessed learner. Keep all prompts
+in the user's language or explicitly chosen language.
+For progress, tests and reviews, trust only the canonical ledger evaluator.
+Never write incomplete competency objects directly into state.json; use the
+validated course scope-set command.
+
 ## Course workspace
 When the user says "Belajar: <topic>":
 1. Run: python scripts/learnprint.py course resolve --query "<topic>"
