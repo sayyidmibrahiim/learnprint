@@ -1889,6 +1889,9 @@ def cmd_course_plan(a):
     if not isinstance(units, list):
         raise ValueError("invalid syllabus in state.json")
     activity = _lesson_activity(path.parent)
+    unit_ids = {v["unit_id"] for v in units if isinstance(v, dict) and "unit_id" in v}
+    if any(v["unit_id"] not in unit_ids for v in activity):
+        raise ValueError("learning activity references absent plan unit")
     output = {"course_id": c["course_id"], "title": c["title"],
               "goal": state.get("goal") or c.get("goal"),
               "method": effective_method(root), "units": [],
