@@ -1823,6 +1823,62 @@ def _registered_course(root, course_id):
     return selected, root / selected["rel_path"] / "state.json", registry
 
 
+LESSON_ACTIVITY_KINDS = {"covered", "practice", "question", "clarification"}
+
+
+def _lesson_activity(course_directory):
+    """Private tutor-reported coverage, NEVER mastery evidence."""
+    path = course_directory / "learning-log.jsonl"
+    if not path.exists():
+        return []
+    raw = path.read_bytes()
+    if raw and not raw.endswith(b"\n"):
+        raise ValueError("learning-log missing terminal newline")
+    rows, ids = [], set()
+    for index, line in enumerate(raw.split(b"\n"), 1):
+        if not line:
+            continue
+        try:
+            item = json.loads(line.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise ValueError(f"invalid learning-log row {index}: {exc}")
+        if (not isinstance(item, dict) or item.get("kind") not in LESSON_ACTIVITY_KINDS
+                or not isinstance(item.get("note"), str) or not item["note"].strip()
+                or not isinstance(item.get("unit_id"), str)
+                or not isinstance(item.get("event_id"), str) or item["event_id"] in ids):
+            raise ValueError(f"invalid learning-log row {index}")
+        ids.add(item["event_id"])
+        rows.append(item)
+    return rows
+
+
+def cmd_course_lesson_log(a):
+    """Record what was actually discussed; never assign a competence score."""
+    root = _courses_root(a)
+    _require(a, root, "state-update")
+    if not a.note.strip():
+        raise ValueError("lesson note must not be empty")
+    with workspace_lock(root):
+        c, path, _ = _registered_course(root, a.course_id)
+        state = load(path)
+        scope = _validated_course_scope(state, a.course_id, path)
+        units = state.get("syllabus", [])
+        if not units:
+            raise ValueError("adopt structured syllabus before logging lesson coverage")
+        _journey_module().validate_units(units, [x["id"] for x in scope])
+        if a.unit_id not in {u["unit_id"] for u in units}:
+            raise ValueError("unknown lesson unit_id: " + a.unit_id)
+        target = path.parent / "learning-log.jsonl"
+        _lesson_activity(path.parent)
+        event = {"event_id": str(uuid.uuid4()), "unit_id": a.unit_id,
+                 "kind": a.kind, "note": a.note,
+                 "recorded_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                 "source": "agent_reported_not_assessment"}
+        append_event_line(target, json.dumps(event, ensure_ascii=False))
+    print(json.dumps(event, ensure_ascii=False))
+    return 0
+
+
 def cmd_course_plan(a):
     """Read-only: show what will be learned before any diagnostic or test."""
     root = _courses_root(a)
@@ -2678,6 +2734,11 @@ def main():
     ov=cs.add_parser("overview");ov.add_argument("--courses-root");ov.set_defaults(func=cmd_course_overview)
     journey=cs.add_parser("plan");journey.add_argument("--course-id",required=True)
     journey.add_argument("--courses-root");journey.set_defaults(func=cmd_course_plan)
+    ll=cs.add_parser("lesson-log");ll.add_argument("--course-id",required=True)
+    ll.add_argument("--unit-id",required=True);ll.add_argument("--kind",required=True,
+        choices=sorted(LESSON_ACTIVITY_KINDS))
+    ll.add_argument("--note",required=True);ll.add_argument("--courses-root")
+    ll.add_argument("--approve",action="store_true");ll.set_defaults(func=cmd_course_lesson_log)
     ps=cs.add_parser("plan-set");ps.add_argument("--course-id",required=True)
     ps.add_argument("--from-file",required=True);ps.add_argument("--courses-root")
     ps.add_argument("--approve",action="store_true");ps.set_defaults(func=cmd_course_plan_set)
