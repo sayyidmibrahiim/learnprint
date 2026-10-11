@@ -136,6 +136,33 @@ class TestPortableCourseOverview(unittest.TestCase):
             self.assertEqual(validation.returncode, 2)
             self.assertIn("INVALID", validation.stdout)
 
+    def test_legacy_unnamed_scope_can_be_repaired_without_loss(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "Courses"
+            cli("course", "init", "--courses-root", root, "--approve")
+            course = read_json(cli("course", "create", "--courses-root", root,
+                                   "--category", "technology", "--title", "SQL sprint",
+                                   "--goal", "interview", "--approve"))
+            state_path = root / course["rel_path"] / "state.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["learning_scope"] = [{"id": "joins", "status": "unknown"}]
+            state_path.write_text(json.dumps(state) + "\n", encoding="utf-8")
+            before_id = state["course_id"]
+            self.assertEqual(cli("course", "validate", "--courses-root", root).returncode, 2)
+            scope = Path(d) / "safe-scope.json"
+            scope.write_text(json.dumps([{"id": "joins", "name": "SQL joins",
+                                          "status": "unknown", "evidence_ids": []}]),
+                             encoding="utf-8")
+            repaired = cli("course", "scope-set", "--courses-root", root,
+                           "--course-id", before_id, "--from-file", scope, "--approve")
+            self.assertEqual(repaired.returncode, 0, repaired.stderr)
+            final = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(final["course_id"], before_id)
+            self.assertEqual(final["learning_scope"][0]["id"], "joins")
+            self.assertEqual(cli("course", "validate", "--courses-root", root).returncode, 0)
+            self.assertEqual(read_json(cli("course", "overview", "--courses-root", root))
+                             ["courses"][0]["status"], "scored")
+
     def test_scope_set_requires_approval_and_retains_other_state(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d) / "Courses"
@@ -164,6 +191,24 @@ class TestPortableCourseOverview(unittest.TestCase):
                                  "--from-file", invalid, "--approve").returncode, 2)
             self.assertEqual(len(json.loads((root / created["rel_path"] / "state.json")
                                             .read_text(encoding="utf-8"))["learning_scope"]), 1)
+
+
+class TestPortableDiscovery(unittest.TestCase):
+    def test_native_project_skill_and_commands_are_bundled(self):
+        names = ["learnprint", "learnprint-assess", "learnprint-learn"]
+        for name in names:
+            self.assertTrue((ROOT / ".agents" / "skills" / name / "SKILL.md").is_file())
+            self.assertTrue((ROOT / "skills" / name / "SKILL.md").is_file())
+            self.assertEqual((ROOT / ".agents" / "skills" / name / "SKILL.md")
+                             .read_bytes(), (ROOT / "skills" / name / "SKILL.md").read_bytes())
+        commands = ["learnprint", "learnprint-learn", "learnprint-continue-learn",
+                    "learnprint-assessment", "learnprint-reassessment",
+                    "learnprint-test", "learnprint-progress", "learnprint-review",
+                    "learnprint-dashboard", "learnprint-help"]
+        for name in commands:
+            p = ROOT / ".opencode" / "commands" / (name + ".md")
+            self.assertTrue(p.is_file(), str(p))
+            self.assertIn("$ARGUMENTS", p.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
