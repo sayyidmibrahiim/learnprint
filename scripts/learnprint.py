@@ -1454,6 +1454,73 @@ def _read_local_profile(root):
     return data
 
 
+ASSESSMENT_TASK_TYPES = {"prior_knowledge", "mechanism", "application",
+                         "transfer", "method_comparison", "reflection"}
+
+
+def _assessment_history(root, session_id=None):
+    """Canonical private session evidence; fail closed on bad or duplicated rows."""
+    path = Path(root) / ".learnprint" / "learner" / "assessment-events.jsonl"
+    if not path.exists():
+        return []
+    raw = path.read_bytes()
+    if raw and not raw.endswith(b"\n"):
+        raise ValueError("assessment log truncated: missing terminal newline")
+    seen = set()
+    events = []
+    for number, line in enumerate(raw.split(b"\n"), 1):
+        if not line:
+            continue
+        try:
+            e = json.loads(line.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise ValueError(f"assessment log corrupt line {number}: {exc}")
+        if not isinstance(e, dict):
+            raise ValueError(f"assessment log invalid entry line {number}")
+        required = ("event_id", "session_id", "question", "observed_answer",
+                    "task_type", "recorded_at")
+        if (any(not isinstance(e.get(key), str) or not e[key].strip()
+                for key in required) or e["task_type"] not in ASSESSMENT_TASK_TYPES):
+            raise ValueError(f"assessment log invalid fields line {number}")
+        if e["event_id"] in seen:
+            raise ValueError(f"assessment log duplicate event_id: {e['event_id']}")
+        seen.add(e["event_id"])
+        events.append(e)
+    return [e for e in events if session_id is None or e["session_id"] == session_id]
+
+
+def cmd_learner_assessment_history(a):
+    root = _courses_root(a)
+    p = _read_local_profile(root)
+    session = p.get("assessment_session_id")
+    print(json.dumps({"session_id": session, "events": _assessment_history(root, session)
+                      if session else []}, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_learner_assessment_record(a):
+    root = _courses_root(a)
+    _require(a, root, "profile-write")
+    if not a.question.strip() or not a.answer.strip():
+        raise ValueError("assessment question and actual learner answer are required")
+    with workspace_lock(root):
+        p = _read_local_profile(root)
+        sid = p.get("assessment_session_id")
+        if p.get("assessment_offer") != "in_progress" or not sid:
+            raise ValueError("no active assessment session; start assessment first")
+        events = _assessment_history(root, sid)
+        if len(events) >= 14:
+            raise ValueError("assessment task limit reached; finalize or mark inconclusive")
+        event = {"event_id": str(uuid.uuid4()), "session_id": sid,
+                 "recorded_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                 "question": a.question, "observed_answer": a.answer,
+                 "task_type": a.task_type}
+        path = root / ".learnprint" / "learner" / "assessment-events.jsonl"
+        append_event_line(path, json.dumps(event, ensure_ascii=False))
+    print(json.dumps(event, ensure_ascii=False, indent=2))
+    return 0
+
+
 def learner_method_status(root):
     """Read-only overview. Missing workspace does not create files."""
     root = Path(root)
@@ -1482,7 +1549,11 @@ def learner_method_status(root):
         raise ValueError("invalid assessment_offer in learner profile")
     # Legacy assessed profiles remain assessed; metadata is not required
     # merely to avoid asking the user to repeat completed assessment.
+    session_id = p.get("assessment_session_id")
+    observed_count = len(_assessment_history(root, session_id)) if session_id else 0
     return {"workspace": "initialized", "profile_id": p["profile_id"],
+            "assessment_session_id": session_id if offer == "in_progress" else None,
+            "assessment_response_count": observed_count if offer == "in_progress" else 0,
             "assessment_status": p["assessment_status"],
             "assessment_offer": offer, "method_source": source,
             "method_revision": p.get("method_revision", 1 if assessed else 0),
@@ -1517,10 +1588,14 @@ def cmd_learner_assessment_start(a):
     _require(a, root, "profile-write")
     with workspace_lock(root):
         p = _read_local_profile(root)
-        if p["assessment_status"] == "assessed" and not a.reassess:
-            raise ValueError("already assessed; use --reassess to explicitly request recalibration")
-        p["assessment_offer"] = "in_progress"
-        atomic_write(_profile_location(root), json.dumps(p, ensure_ascii=False, indent=2) + "\n")
+        if p.get("assessment_offer") == "in_progress" and p.get("assessment_session_id"):
+            pass  # Resume same session: never forget previous answers.
+        else:
+            if p["assessment_status"] == "assessed" and not a.reassess:
+                raise ValueError("already assessed; use --reassess to explicitly request recalibration")
+            p["assessment_session_id"] = str(uuid.uuid4())
+            p["assessment_offer"] = "in_progress"
+            atomic_write(_profile_location(root), json.dumps(p, ensure_ascii=False, indent=2) + "\n")
     return cmd_learner_status(a)
 
 
@@ -1547,6 +1622,20 @@ def cmd_learner_assessment_complete(a):
             raise ValueError("invalid assessment candidate: " + "; ".join(problems))
         if not candidate.get("evidence") or not candidate.get("observed_claims"):
             raise ValueError("real evidence-linked claims required to complete assessment")
+        logged = _assessment_history(root, old.get("assessment_session_id"))
+        if len(logged) < 2 or len({e["task_type"] for e in logged}) < 2:
+            raise ValueError("assessment requires at least two logged observations of different task types")
+        event_ids = {e["event_id"] for e in logged}
+        backed_evidence = {e["id"] for e in candidate["evidence"]
+                           if (e.get("origin") == "observed_task"
+                               and isinstance(e.get("source"), str)
+                               and e["source"].startswith("assessment-event:")
+                               and e["source"].split(":", 1)[1] in event_ids)}
+        linked_claims = [c for c in candidate["observed_claims"]
+                         if c.get("category") == "observed"
+                         and any(ref in backed_evidence for ref in c.get("evidence_ids", []))]
+        if len(backed_evidence) < 2 or not linked_claims:
+            raise ValueError("candidate evidence must link at least two recorded assessment answers")
         previous_revision = old.get("method_revision", 0)
         if not isinstance(previous_revision, int) or previous_revision < 0:
             raise ValueError("invalid previous method_revision")
@@ -2489,6 +2578,12 @@ def main():
     start.set_defaults(func=cmd_learner_assessment_start)
     done=lm.add_parser("assessment-complete");done.add_argument("--courses-root")
     done.add_argument("--approve",action="store_true");done.set_defaults(func=cmd_learner_assessment_complete)
+    history=lm.add_parser("assessment-history");history.add_argument("--courses-root")
+    history.set_defaults(func=cmd_learner_assessment_history)
+    observe=lm.add_parser("assessment-record");observe.add_argument("--courses-root")
+    observe.add_argument("--question",required=True);observe.add_argument("--answer",required=True)
+    observe.add_argument("--task-type",required=True,choices=sorted(ASSESSMENT_TASK_TYPES))
+    observe.add_argument("--approve",action="store_true");observe.set_defaults(func=cmd_learner_assessment_record)
     a=p.parse_args()
     try: return a.func(a)
     except (OSError,ValueError,KeyError,TypeError,json.JSONDecodeError) as e:
