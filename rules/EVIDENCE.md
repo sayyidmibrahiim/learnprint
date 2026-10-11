@@ -29,3 +29,18 @@ review scheduling share one evaluator and one event snapshot.
 ## Sources
 External claims carry a citation or `UNVERIFIED`. Learner statements record
 what was said, not what is true. Model confidence is never a source.
+
+## Misclassified confusion (explicit append-only exclusion)
+
+An admission such as "masih gak ngerti" is not a completed test attempt.
+The recording CLI prevents a narrow list of standalone confusion utterances
+from being added as scored answers; legacy events remain schema-readable.
+
+If a learner approves correction of a SPECIFIC historical event, append a
+new `task_type: correction` record that links `corrects_event_id` with
+`exclude_from_assessment: true`. It must match the same course, topic and
+competency. Both original and corrective rows remain in the canonical ledger.
+The evaluator excludes only the linked original answer from active
+`observations` and mastery gates, and reports `excluded_observations`.
+The correction itself is metadata, not an additional attempt. No existing
+private evidence is automatically edited, deleted, or excluded by upgrades.

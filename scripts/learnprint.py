@@ -599,6 +599,11 @@ def validate_event(e):
             errs.append("session_id must be a UUID")
     if "grader_source" in e and e["grader_source"] not in GRADER_SOURCES:
         errs.append("invalid event.grader_source")
+    if "exclude_from_assessment" in e and (
+            e["exclude_from_assessment"] is not True
+            or e.get("task_type") != "correction"
+            or not e.get("corrects_event_id")):
+        errs.append("exclude_from_assessment requires a linked correction event")
     for link in ("confirms_event_id", "corrects_event_id", "corroborates_event_id"):
         if link in e and (not isinstance(e[link], str) or not e[link].strip()):
             errs.append(f"{link} must be a non-empty event id")
@@ -731,6 +736,25 @@ def _validate_references(topic, topic_events, ledger_ids):
                     f"event {e.get('event_id')!r}: dangling {link} {target!r}")
 
 
+def _excluded_assessment_event_ids(ledger):
+    """Append-only explicit exclusions; never delete canonical learner responses."""
+    by_id = {e["event_id"]: e for e in ledger}
+    excluded = set()
+    for correction in ledger:
+        if correction.get("exclude_from_assessment") is not True:
+            continue
+        target = by_id.get(correction.get("corrects_event_id"))
+        if (correction.get("task_type") != "correction" or target is None
+                or target.get("task_type") in {"correction", "confirmation"}):
+            raise LedgerReferenceError("assessment exclusion must reference a real answer")
+        if (correction.get("topic_id") != target.get("topic_id")
+                or correction.get("competency_id") != target.get("competency_id")
+                or correction.get("course_id") != target.get("course_id")):
+            raise LedgerReferenceError("assessment exclusion crosses course/competency")
+        excluded.add(target["event_id"])
+    return excluded
+
+
 def _evaluate_competency(c, ev_sorted, ledger, now, policy):
     """Single canonical evaluator. Returns (status, detail).
 
@@ -832,6 +856,7 @@ def progress(topic, events, now=None, policy=None, registry=None):
     policy = policy or RETENTION_POLICY
     ledger = events
     ledger_ids = {e.get("event_id") for e in ledger if isinstance(e, dict)}
+    excluded_ids = _excluded_assessment_event_ids(ledger)
     by_comp = {}
     for e in ledger:
         if e.get("topic_id") != topic.get("topic_id") or e.get("is_synthetic_example"):
@@ -854,11 +879,15 @@ def progress(topic, events, now=None, policy=None, registry=None):
     for c in topic.get("learning_scope", []):
         ev = sorted(by_comp.get(c["id"], []),
                     key=lambda x: (_parse_dt(x["date"]), x["event_id"]))
-        status, detail = _evaluate_competency(c, ev, ledger, now, policy)
+        excluded_here = [x for x in ev if x["event_id"] in excluded_ids]
+        observed = [x for x in ev if x["event_id"] not in excluded_ids
+                    and x["task_type"] not in {"correction", "confirmation"}]
+        status, detail = _evaluate_competency(c, observed, ledger, now, policy)
         results.append({
             "id": c["id"], "name": c["name"], "status": status,
             "basis": detail["basis"],
-            "observations": len(ev),
+            "observations": len(observed),
+            "excluded_observations": len(excluded_here),
             "independent_pass_application": detail["app_ok"],
             "independent_pass_transfer": detail["transfer_ok"],
             "delayed_pass": detail["delayed_pass"],
@@ -1779,6 +1808,9 @@ def course_overview(root):
                 scored = progress(topic, ledger, now=now, policy=policy, registry=registry)
                 if not any(x["observations"] for x in scored["competencies"]):
                     item.update({"status": "not_assessed", "progress": None,
+                                 "excluded_observation_count": sum(
+                                     x.get("excluded_observations", 0)
+                                     for x in scored["competencies"]),
                                  "competency_count": len(scope),
                                  "next_action": "start topic baseline diagnostic"})
                 else:
@@ -2089,8 +2121,20 @@ def cmd_course_plan(a):
 
 
 def cmd_course_plan_set(a):
-    """Approved, validated plan update. Back up prior state; never erase evidence."""
+    """Preview validated plan without writes, or apply with approval and backup."""
     root = _courses_root(a)
+    if a.dry_run:
+        course, path, _ = _registered_course(root, a.course_id)
+        current = load(path)
+        scope = _validated_course_scope(current, a.course_id, path)
+        units = load(a.from_file)
+        helper = _journey_module()
+        order = helper.validate_units(units, [c["id"] for c in scope])
+        helper.preserve_existing(current.get("syllabus", []), units)
+        print(json.dumps({"status": "valid_preview", "course_id": a.course_id,
+                          "unit_count": len(units), "ordered_unit_ids": order,
+                          "files_modified": 0}, ensure_ascii=False, indent=2))
+        return 0
     _require(a, root, "state-update")
     with workspace_lock(root):
         c, path, _registry = _registered_course(root, a.course_id)
@@ -2186,6 +2230,13 @@ def cmd_course_resume(a):
     root = _courses_root(a)
     registry = registry_read(root)
     courses = registry.get("courses", [])
+    selected_id = getattr(a, "course_id", None)
+    if selected_id:
+        selected = next((c for c in courses if c["course_id"] == selected_id), None)
+        if selected is None:
+            raise ValueError("unknown course_id: " + selected_id)
+        print(json.dumps({"status": "found", "course": selected}, ensure_ascii=False, indent=2))
+        return 0
     if not courses:
         print(json.dumps({"status": "none", "note": "no courses yet; start a new one"}))
         return 0
@@ -2412,29 +2463,35 @@ def cmd_course_revoke_approval(a):
     return 0
 
 
+def _compute_course_review_plan(root):
+    registry = registry_read(root)
+    ledger = ledger_read_trusted(root / ".learnprint" / "events.jsonl", workspace_root=root)
+    topics = _course_topics(root, registry)
+    for t in topics:
+        problems = validate_topic(t)
+        if problems:
+            raise ValueError(f"invalid course state: {problems}")
+    target = root / ".learnprint" / "reviews.json"
+    stored = {}
+    if target.exists():
+        try:
+            stored = json.loads(target.read_text(encoding="utf-8"))
+        except ValueError:
+            stored = {}
+    return reviews_from_events(topics, ledger, stored_reviews=stored or None), target
+
+
 def cmd_course_plan_reviews(a):
     root = _courses_root(a)
+    if a.dry_run:
+        result, _ = _compute_course_review_plan(root)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
     _require(a, root, "state-update")
     with workspace_lock(root):
-        registry = registry_read(root)
-        ledger = ledger_read_trusted(root / ".learnprint" / "events.jsonl", workspace_root=root)
-        topics = _course_topics(root, registry)
-        for t in topics:
-            errs = validate_topic(t)
-            if errs:
-                raise ValueError(f"invalid course state: {errs}")
-        rp = root / ".learnprint" / "reviews.json"
-        stored = {}
-        if rp.exists():
-            try:
-                stored = json.loads(rp.read_text(encoding="utf-8"))
-            except ValueError:
-                stored = {}
-        result = reviews_from_events(topics, ledger, stored_reviews=stored or None)
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        if a.dry_run:
-            return 0
+        result, rp = _compute_course_review_plan(root)
         atomic_write(rp, json.dumps(result, ensure_ascii=False, indent=2) + "\n")
+    print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -2772,6 +2829,21 @@ def cmd_report(a):
     return 0
 
 
+CONFUSION_ONLY = {
+    "bingung", "aku bingung", "saya bingung", "masih bingung",
+    "gak ngerti", "ga ngerti", "nggak ngerti", "masih gak ngerti",
+    "masih ga ngerti", "masih nggak ngerti", "gak ngerti gw",
+    "aku belum paham", "saya belum paham", "belum paham",
+    "i don't understand", "i do not understand", "i'm confused",
+    "i am confused", "i don't know", "i do not know",
+}
+
+
+def _confusion_only(text):
+    """Narrow append-time safeguard; legacy ledger remains readable."""
+    return re.sub(r"[.!?\u2026]+$", "", text.strip().casefold()).strip() in CONFUSION_ONLY
+
+
 def cmd_record(a):
     w=Path(a.workspace).expanduser().resolve()
     p=w/"events.jsonl"
@@ -2781,6 +2853,10 @@ def cmd_record(a):
     if not (w/"manifest.json").exists(): raise ValueError("Initialize workspace first")
     if getattr(a, "session_id", None):
         raise ValueError("--session-id is only supported for Courses workspaces")
+    if getattr(a, "exclude_from_assessment", False):
+        raise ValueError("--exclude-from-assessment requires a Courses workspace")
+    if a.task_type not in {"correction", "confirmation"} and _confusion_only(a.answer):
+        raise ValueError("Confusion is not a scored response; pause and explain")
     if not a.approve: raise ValueError("Explicit write approval required: --approve")
     rubric=json.loads(a.rubric)
     e={"event_id":a.event_id,"date":dt.datetime.now(dt.timezone.utc).isoformat(),
@@ -2805,6 +2881,10 @@ def _cmd_record_courses(a, w):
     root = w
     if not getattr(a, "approve", False):
         raise ValueError("Explicit write approval required: --approve")
+    if a.task_type not in {"correction", "confirmation"} and _confusion_only(a.answer):
+        raise ValueError("Confusion is not a scored response; pause and explain")
+    if getattr(a, "exclude_from_assessment", False) and (a.task_type != "correction" or not a.corrects):
+        raise ValueError("--exclude-from-assessment requires --task-type correction and --corrects EVENT_ID")
     ap = read_approval(root)
     if not approval_allows(ap, "event-append"):
         raise ValueError("Standing approval missing, revoked, or out of scope for event-append")
@@ -2847,10 +2927,22 @@ def _cmd_record_courses(a, w):
                 e[link] = val
         if getattr(a, "grader_source", None):
             e["grader_source"] = a.grader_source
+        if getattr(a, "exclude_from_assessment", False):
+            e["exclude_from_assessment"] = True
         errs = validate_event(e)
         if errs:
             raise ValueError("Invalid event: " + "; ".join(errs))
         existing = ledger_read_trusted(lp / "events.jsonl", workspace_root=root)
+        if getattr(a, "exclude_from_assessment", False):
+            target = next((x for x in existing if x["event_id"] == a.corrects), None)
+            if target is None or target["task_type"] in {"correction", "confirmation"}:
+                raise ValueError("exclusion target must be an existing learner answer")
+            if (target.get("topic_id") != e["topic_id"]
+                    or target.get("competency_id") != e["competency_id"]
+                    or target.get("course_id") != e.get("course_id")):
+                raise ValueError("exclusion target has different course/competency")
+            if target["event_id"] in _excluded_assessment_event_ids(existing):
+                raise ValueError("event already excluded from assessment")
         if e["event_id"] in {x.get("event_id") for x in existing}:
             raise ValueError("Duplicate event_id")
         append_event_line(lp / "events.jsonl", json.dumps(e, ensure_ascii=False))
@@ -2865,6 +2957,12 @@ def _cmd_record_courses(a, w):
 
 
 def main():
+    # Preserve active encoding; escape unsupported Unicode on limited Windows pipes.
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(errors="backslashreplace")
+        except (OSError, ValueError):
+            pass
     p=argparse.ArgumentParser(description=__doc__)
     sub=p.add_subparsers(dest="cmd",required=True)
     v=sub.add_parser("validate");v.add_argument("--profile",required=True);v.add_argument("--topic");v.add_argument("--events");v.set_defaults(func=cmd_validate)
@@ -2888,6 +2986,8 @@ def main():
     rec.add_argument("--grader-source",choices=sorted(GRADER_SOURCES),default=None)
     rec.add_argument("--confirms",default=None);rec.add_argument("--corrects",default=None)
     rec.add_argument("--corroborates",default=None)
+    rec.add_argument("--exclude-from-assessment",action="store_true",
+                     help="Explicit append-only exclusion of a misclassified answer")
 
     course=sub.add_parser("course")
     cs=course.add_subparsers(dest="course_cmd",required=True)
@@ -2928,13 +3028,16 @@ def main():
     ll.add_argument("--approve",action="store_true");ll.set_defaults(func=cmd_course_lesson_log)
     ps=cs.add_parser("plan-set");ps.add_argument("--course-id",required=True)
     ps.add_argument("--from-file",required=True);ps.add_argument("--courses-root")
-    ps.add_argument("--approve",action="store_true");ps.set_defaults(func=cmd_course_plan_set)
+    ps.add_argument("--approve",action="store_true")
+    ps.add_argument("--dry-run",action="store_true")
+    ps.set_defaults(func=cmd_course_plan_set)
     scope=cs.add_parser("scope-set");scope.add_argument("--course-id",required=True)
     scope.add_argument("--from-file",required=True);scope.add_argument("--courses-root")
     scope.add_argument("--approve",action="store_true");scope.set_defaults(func=cmd_course_scope_set)
     db=cs.add_parser("dashboard");db.add_argument("--approve",action="store_true")
     db.add_argument("--courses-root");db.set_defaults(func=cmd_course_dashboard)
-    rs=cs.add_parser("resume");rs.add_argument("--courses-root");rs.set_defaults(func=cmd_course_resume)
+    rs=cs.add_parser("resume");rs.add_argument("--courses-root")
+    rs.add_argument("--course-id");rs.set_defaults(func=cmd_course_resume)
     cv=cs.add_parser("validate");cv.add_argument("--repair",action="store_true")
     cv.add_argument("--approve",action="store_true");cv.add_argument("--courses-root")
     cv.set_defaults(func=cmd_course_validate)
