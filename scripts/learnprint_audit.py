@@ -11,12 +11,17 @@ def check(status, evidence, note):
 
 
 def build_report(course_id, method, sessions, lesson_units, activities,
-                 evidence_events, selected_session=None, transcript=None):
+                 evidence_events, selected_session=None, transcript=None,
+                 state_problem=None):
     matching = [s for s in sessions if s["course_id"] == course_id]
     if selected_session:
         matching = [s for s in matching if s["session_id"] == selected_session]
     session = matching[-1] if matching else None
     checks = {}
+    checks["course_state"] = check(
+        "FAIL" if state_problem else "PASS",
+        [] if state_problem else [course_id],
+        state_problem or "Course state identity and competency structure validated")
     if session is None:
         checks["method_receipt"] = check(
             "NOT_VERIFIED", [], "No method-session receipt for requested course/session")
