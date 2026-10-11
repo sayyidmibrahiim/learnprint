@@ -1342,22 +1342,36 @@ def cmd_course_init(a):
     root = _courses_root(a)
     if not getattr(a, "approve", False):
         raise ValueError("Explicit approval required: --approve")
-    lp = root / ".learnprint"
-    if (lp / "registry.json").exists():
-        raise ValueError(f"Workspace already initialized: {root}")
-    lp.mkdir(parents=True, exist_ok=True)
-    (lp / "learner").mkdir(exist_ok=True)
-    shutil.copyfile(ROOT / "templates/course-registry.json", lp / "registry.json")
-    shutil.copyfile(ROOT / "templates/learner-profile-starter.json", lp / "learner/profile.json")
-    shutil.copyfile(ROOT / "templates/review-queue.json", lp / "reviews.json")
-    (lp / "config.json").write_text(json.dumps(
-        {"min_elapsed_hours": RETENTION_POLICY["min_elapsed_hours"],
-         "intervals_days": list(RETENTION_POLICY["intervals_days"])},
-        ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    (lp / "events.jsonl").write_text("", encoding="utf-8")
-    (root / "HANDOFF.md").write_text(
-        "# Learnprint handoff\n\nWorkspace initialized. No courses yet.\n", encoding="utf-8")
-    rec = write_approval(root)
+    # Serialize initialization too. workspace_lock creates only
+    # Courses/.learnprint/.lock; that lock alone is not initialized data.
+    # Refuse ALL other existing files, even when registry.json is absent:
+    # missing/corrupt registries must NEVER cause an existing ledger,
+    # profile, review queue, or handoff to be overwritten by init.
+    with workspace_lock(root):
+        lp = root / ".learnprint"
+        existing = [
+            p for p in root.iterdir() if p.name != ".learnprint"
+        ] + [
+            p for p in lp.iterdir() if p.name != ".lock"
+        ]
+        if existing:
+            raise ValueError(
+                f"Existing workspace data at {root}; refusing to initialize "
+                "or overwrite any files. Recover the existing workspace "
+                "and registry instead (course validate / registry backup). "
+                f"Found: {', '.join(str(p.relative_to(root)) for p in existing[:5])}")
+        (lp / "learner").mkdir(exist_ok=True)
+        shutil.copyfile(ROOT / "templates/course-registry.json", lp / "registry.json")
+        shutil.copyfile(ROOT / "templates/learner-profile-starter.json", lp / "learner/profile.json")
+        shutil.copyfile(ROOT / "templates/review-queue.json", lp / "reviews.json")
+        (lp / "config.json").write_text(json.dumps(
+            {"min_elapsed_hours": RETENTION_POLICY["min_elapsed_hours"],
+             "intervals_days": list(RETENTION_POLICY["intervals_days"])},
+            ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        (lp / "events.jsonl").write_text("", encoding="utf-8")
+        (root / "HANDOFF.md").write_text(
+            "# Learnprint handoff\n\nWorkspace initialized. No courses yet.\n", encoding="utf-8")
+        rec = write_approval(root)
     print(f"CREATED Courses workspace: {root}")
     print(f"Standing approval recorded (scope: {', '.join(rec['scope'])})")
     return 0
@@ -1551,6 +1565,16 @@ def collect_workspace_problems(root, registry):
         problems.append(f"ledger damaged: {len(diag['damage'])} record(s)")
     if diag.get("absent_kind") == "missing-expected":
         problems.append("ledger missing: events.jsonl absent in initialized workspace")
+    if diag["status"] == "ok":
+        # Syntax-only diagnostics are insufficient for declaring a
+        # workspace VALID: also enforce event schema and unique IDs.
+        # Diagnostic output remains read-only and cannot become an
+        # authoritative event source.
+        try:
+            ledger_read_trusted(root / ".learnprint" / "events.jsonl",
+                                workspace_root=root)
+        except (LedgerDamage, LedgerMissing, WorkspaceNotInitialized) as exc:
+            problems.append(f"ledger invalid: {exc}")
     for tmp in (root / ".learnprint").glob("*.tmp"):
         problems.append(f"stale temp file: {tmp.name}")
     return problems

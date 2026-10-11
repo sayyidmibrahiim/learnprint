@@ -304,6 +304,40 @@ class TestB4RepairTransactions(unittest.TestCase):
             self.assertEqual(lp.read_bytes(), before)
 
 
+class TestHotfixInitAndLedgerValidation(unittest.TestCase):
+    def test_init_refuses_existing_workspace_with_missing_registry(self):
+        """Init must never overwrite existing evidence if registry was lost."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(d)
+            lp = root / ".learnprint"
+            original_ledger = b'{"existing":"learner-evidence-canary"}\n'
+            original_profile = b'{"existing":"learner-profile-canary"}\n'
+            (lp / "events.jsonl").write_bytes(original_ledger)
+            (lp / "learner" / "profile.json").write_bytes(original_profile)
+            (lp / "registry.json").unlink()
+            result = _cli("course", "init", "--courses-root", str(root), "--approve")
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertIn("recover", (result.stdout + result.stderr).lower())
+            self.assertEqual((lp / "events.jsonl").read_bytes(), original_ledger)
+            self.assertEqual((lp / "learner" / "profile.json").read_bytes(), original_profile)
+            self.assertFalse((lp / "registry.json").exists())
+
+    def test_course_validate_rejects_schema_invalid_ledger(self):
+        """JSON syntax alone cannot make invalid evidence authoritative."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = make_workspace(d)
+            ledger = root / ".learnprint" / "events.jsonl"
+            original = b'{"not_an_event": true}\n'
+            ledger.write_bytes(original)
+            result = _cli("course", "validate", "--courses-root", str(root))
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertIn("INVALID", result.stdout)
+            self.assertIn("ledger", result.stdout.lower())
+            self.assertEqual(ledger.read_bytes(), original)
+
+
 class TestB5ValidateHonesty(unittest.TestCase):
     def test_repair_does_not_claim_success_with_damaged_ledger(self):
         import tempfile, io
