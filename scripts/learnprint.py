@@ -1618,9 +1618,14 @@ def course_overview(root):
                 topic = {"topic_id": c.get("topic_id") or c["course_id"],
                          "learning_scope": scope, "goal": c.get("goal", "")}
                 scored = progress(topic, ledger, now=now, policy=policy, registry=registry)
-                item.update({"status": "scored", "progress": scored,
-                             "competency_count": len(scope),
-                             "next_action": "review due competencies or continue next unit"})
+                if not any(x["observations"] for x in scored["competencies"]):
+                    item.update({"status": "not_assessed", "progress": None,
+                                 "competency_count": len(scope),
+                                 "next_action": "start topic baseline diagnostic"})
+                else:
+                    item.update({"status": "scored", "progress": scored,
+                                 "competency_count": len(scope),
+                                 "next_action": "review due competencies or continue next unit"})
         except (ValueError, KeyError, TypeError, OSError) as exc:
             item.update({"status": "state_invalid", "progress": None,
                          "reason": str(exc), "next_action": "repair state without overwriting evidence"})
