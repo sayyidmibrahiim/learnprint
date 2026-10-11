@@ -187,6 +187,28 @@ class TestEffectiveMethod(unittest.TestCase):
             self.assertEqual(report2["overall"], "NOT_VERIFIED")
             self.assertEqual(report2["checks"]["learner_preferences_followed"]["status"], "NOT_VERIFIED")
 
+    def test_audit_legacy_malformed_course_still_reports_method_and_state_failure(self):
+        with tempfile.TemporaryDirectory() as d:
+            root, course = self.setup_course(d)
+            cid = course["course_id"]
+            session = data("course", "session-start", "--courses-root", root,
+                           "--course-id", cid, "--approve")
+            state = root / course["rel_path"] / "state.json"
+            doc = json.loads(state.read_text(encoding="utf-8"))
+            doc["learning_scope"] = [{"id": "sql", "status": "unknown"}]
+            state.write_text(json.dumps(doc), encoding="utf-8")
+            output = run("course", "method-audit", "--courses-root", root,
+                         "--course-id", cid, "--session-id", session["session_id"])
+            self.assertEqual(output.returncode, 2)
+            report = json.loads(output.stdout)
+            self.assertEqual(report["overall"], "FAIL")
+            self.assertEqual(report["checks"]["course_state"]["status"], "FAIL")
+            self.assertIn("missing name", report["checks"]["course_state"]["note"])
+            self.assertEqual(report["checks"]["method_receipt"]["status"], "PASS")
+            self.assertEqual(report["checks"]["learner_preferences_followed"]["status"],
+                             "NOT_VERIFIED")
+            self.assertEqual(len((root / ".learnprint" / "events.jsonl").read_bytes()), 0)
+
     def test_method_drift_detected_and_log_corruption_refused(self):
         with tempfile.TemporaryDirectory() as d:
             root, course = self.setup_course(d)
