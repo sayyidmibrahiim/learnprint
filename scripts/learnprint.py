@@ -1598,11 +1598,13 @@ def effective_method(root):
         source = "founder_default"
     else:
         private = _read_local_profile(root)
-        if private["assessment_status"] in {"assessed", "provisional"}:
+        if private["assessment_status"] == "assessed":
             active = private
-            source = ("personal_assessment" if private["assessment_status"] == "assessed"
-                      else "personal_provisional")
+            source = "personal_assessment"
         else:
+            # An incomplete/provisional assessment is not a completed
+            # personal method. Match learner_method_status() and do not
+            # activate provisional draft preferences or instructional defaults.
             active = founder
             source = "founder_default"
     settings = active["instruction_defaults"]
@@ -1893,7 +1895,7 @@ def _lesson_activity(course_directory):
     return rows
 
 
-def _method_session_receipts(directory):
+def _method_session_receipts(directory, expected_course_id=None):
     """Read-only strict validation of course-scoped, private method receipts."""
     path = directory / "method-sessions.jsonl"
     if not path.exists():
@@ -1921,6 +1923,9 @@ def _method_session_receipts(directory):
             uuid.UUID(row["session_id"])
         except (ValueError, AttributeError):
             raise ValueError(f"invalid session UUID at line {index}")
+        if expected_course_id is not None and row["course_id"] != expected_course_id:
+            raise ValueError(f"method receipt course_id mismatch at line {index}: "
+                             "receipt belongs to another course")
         seen.add(row["session_id"])
         rows.append(row)
     return rows
@@ -1933,7 +1938,7 @@ def cmd_course_session_start(a):
     with workspace_lock(root):
         course, path, _ = _registered_course(root, a.course_id)
         method = effective_method(root)
-        sessions = _method_session_receipts(path.parent)
+        sessions = _method_session_receipts(path.parent, a.course_id)
         receipt = {"session_id": str(uuid.uuid4()),
                    "course_id": course["course_id"],
                    "method_source": method["source"],
@@ -1970,7 +1975,7 @@ def cmd_course_method_audit(a):
         state_problem = "invalid course state: " + str(exc)
         units = []
     method = effective_method(root)
-    sessions = _method_session_receipts(path.parent)
+    sessions = _method_session_receipts(path.parent, a.course_id)
     if a.session_id and not any(
             s["session_id"] == a.session_id and s["course_id"] == a.course_id
             for s in sessions):
@@ -2014,7 +2019,7 @@ def cmd_course_lesson_log(a):
             raise ValueError("unknown lesson unit_id: " + a.unit_id)
         if a.session_id and not any(
                 x["session_id"] == a.session_id and x["course_id"] == a.course_id
-                for x in _method_session_receipts(path.parent)):
+                for x in _method_session_receipts(path.parent, a.course_id)):
             raise ValueError("session_id not registered for this course")
         target = path.parent / "learning-log.jsonl"
         _lesson_activity(path.parent)
@@ -2832,7 +2837,7 @@ def _cmd_record_courses(a, w):
                 raise ValueError("--session-id requires --course-id in Courses mode")
             selected_path = root / entry["rel_path"]
             if not any(x["session_id"] == session_id and x["course_id"] == course_id
-                       for x in _method_session_receipts(selected_path)):
+                       for x in _method_session_receipts(selected_path, course_id)):
                 raise ValueError("session_id not registered for selected course")
             e["session_id"] = session_id
         for link, val in (("confirms_event_id", getattr(a, "confirms", None)),
