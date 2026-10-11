@@ -1562,6 +1562,33 @@ def learner_method_status(root):
             "course_count": len(registry.get("courses", []))}
 
 
+def effective_method(root):
+    """Read-only effective instruction settings with verifiable fingerprint."""
+    status = learner_method_status(root)
+    if status["workspace"] == "not_initialized":
+        settings = load(ROOT / "profiles/founder-default.json")["instruction_defaults"]
+        source = "founder_default"
+    else:
+        private = _read_local_profile(root)
+        if private["assessment_status"] in {"assessed", "provisional"}:
+            settings = private["instruction_defaults"]
+            source = "personal_assessment" if private["assessment_status"] == "assessed" else "personal_provisional"
+        else:
+            settings = load(ROOT / "profiles/founder-default.json")["instruction_defaults"]
+            source = "founder_default"
+    fingerprint = method_fingerprint(settings)
+    if fingerprint != status["method_fingerprint"] or not status.get("stored_fingerprint_matches", True):
+        raise ValueError("effective method fingerprint mismatch: inspect profile before teaching")
+    return {"source": source, "fingerprint": fingerprint,
+            "instruction_defaults": settings, "assessment_status": status["assessment_status"],
+            "verification": "settings resolved; tutor adherence must be checked in live session"}
+
+
+def cmd_learner_method(a):
+    print(json.dumps(effective_method(_courses_root(a)), ensure_ascii=False, indent=2))
+    return 0
+
+
 def cmd_learner_status(a):
     print(json.dumps(learner_method_status(_courses_root(a)), ensure_ascii=False, indent=2))
     return 0
@@ -2571,6 +2598,7 @@ def main():
     learner=sub.add_parser("learner")
     lm=learner.add_subparsers(dest="learner_cmd",required=True)
     st=lm.add_parser("status");st.add_argument("--courses-root");st.set_defaults(func=cmd_learner_status)
+    met=lm.add_parser("method");met.add_argument("--courses-root");met.set_defaults(func=cmd_learner_method)
     default=lm.add_parser("use-default");default.add_argument("--courses-root")
     default.add_argument("--approve",action="store_true");default.set_defaults(func=cmd_learner_default)
     start=lm.add_parser("assessment-start");start.add_argument("--courses-root")
