@@ -1439,6 +1439,17 @@ def method_fingerprint(instruction_defaults):
     return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def effective_method_fingerprint(settings, preferences):
+    """Full v2 contract: instructional defaults AND learner preferences."""
+    if not isinstance(settings, dict) or not isinstance(preferences, dict):
+        raise ValueError("method settings and preferences must be objects")
+    payload = json.dumps(
+        {"protocol": "learnprint-effective-method-v2",
+         "instruction_defaults": settings, "preferences": preferences},
+        sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def _profile_location(root):
     return Path(root) / ".learnprint" / "learner" / "profile.json"
 
@@ -1567,25 +1578,44 @@ def learner_method_status(root):
 
 
 def effective_method(root):
-    """Read-only effective instruction settings with verifiable fingerprint."""
+    """Resolve the actual entire instruction contract without mutating data.
+
+    Keep the legacy defaults-only fingerprint for old private profiles,
+    and add v2 effective_fingerprint including preferences. Never silently
+    use founder preferences for an assessed personal profile.
+    """
     status = learner_method_status(root)
+    founder = load(ROOT / "profiles" / "founder-default.json")
     if status["workspace"] == "not_initialized":
-        settings = load(ROOT / "profiles/founder-default.json")["instruction_defaults"]
+        active = founder
         source = "founder_default"
     else:
         private = _read_local_profile(root)
         if private["assessment_status"] in {"assessed", "provisional"}:
-            settings = private["instruction_defaults"]
-            source = "personal_assessment" if private["assessment_status"] == "assessed" else "personal_provisional"
+            active = private
+            source = ("personal_assessment" if private["assessment_status"] == "assessed"
+                      else "personal_provisional")
         else:
-            settings = load(ROOT / "profiles/founder-default.json")["instruction_defaults"]
+            active = founder
             source = "founder_default"
-    fingerprint = method_fingerprint(settings)
-    if fingerprint != status["method_fingerprint"] or not status.get("stored_fingerprint_matches", True):
+    settings = active["instruction_defaults"]
+    preferences = active.get("preferences", {})
+    if not isinstance(preferences, dict):
+        raise ValueError("effective method preferences must be object")
+    legacy = method_fingerprint(settings)
+    if legacy != status["method_fingerprint"] or not status.get("stored_fingerprint_matches", True):
         raise ValueError("effective method fingerprint mismatch: inspect profile before teaching")
-    return {"source": source, "fingerprint": fingerprint,
-            "instruction_defaults": settings, "assessment_status": status["assessment_status"],
-            "verification": "settings resolved; tutor adherence must be checked in live session"}
+    full = effective_method_fingerprint(settings, preferences)
+    return {"source": source, "fingerprint": legacy,
+            "fingerprint_scope": "legacy_instruction_defaults_only",
+            "effective_fingerprint": full,
+            "effective_fingerprint_scope": "instruction_defaults_and_preferences",
+            "method_protocol": "learnprint-effective-method-v2",
+            "method_revision": status.get("method_revision", 0),
+            "profile_id": status.get("profile_id"),
+            "assessment_status": status["assessment_status"],
+            "preferences": preferences, "instruction_defaults": settings,
+            "verification": "Configuration resolved; behavioral adherence needs independent session evidence"}
 
 
 def cmd_learner_method(a):
