@@ -1801,6 +1801,73 @@ def cmd_course_scope_set(a):
     return 0
 
 
+def _journey_module():
+    try:
+        import learnprint_journey
+        return learnprint_journey
+    except ImportError:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "learnprint_journey", ROOT / "scripts" / "learnprint_journey.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+
+def _registered_course(root, course_id):
+    registry = registry_read(root)
+    selected = next((c for c in registry.get("courses", [])
+                     if c.get("course_id") == course_id), None)
+    if selected is None:
+        raise ValueError("unknown course_id: " + course_id)
+    return selected, root / selected["rel_path"] / "state.json", registry
+
+
+def cmd_course_plan(a):
+    """Read-only: show what will be learned before any diagnostic or test."""
+    root = _courses_root(a)
+    c, path, registry = _registered_course(root, a.course_id)
+    state = load(path)
+    scope = _validated_course_scope(state, c["course_id"], path)
+    units = state.get("syllabus", [])
+    if not isinstance(units, list):
+        raise ValueError("invalid syllabus in state.json")
+    output = {"course_id": c["course_id"], "title": c["title"],
+              "goal": state.get("goal") or c.get("goal"),
+              "method": effective_method(root), "units": [],
+              "syllabus_status": "structured" if units else "needs_adoption"}
+    if units:
+        ordered = _journey_module().validate_units(units, [x["id"] for x in scope])
+        index = {u["unit_id"]: u for u in units}
+        ledger = ledger_read_trusted(root / ".learnprint" / "events.jsonl",
+                                     workspace_root=root)
+        result = progress({"topic_id": c.get("topic_id") or c["course_id"],
+                           "learning_scope": scope}, ledger, registry=registry)
+        by_id = {x["id"]: x for x in result["competencies"]}
+        for uid in ordered:
+            unit = dict(index[uid])
+            details = [by_id[x] for x in unit["competency_ids"]]
+            unit["evidence_status"] = (
+                "maintained" if all(x["status"] == "maintained" for x in details)
+                else "immediate_demonstrated" if all(
+                    x["independent_pass_application"] and x["independent_pass_transfer"]
+                    for x in details)
+                else "in_progress" if any(x["observations"] for x in details)
+                else "not_assessed")
+            output["units"].append(unit)
+        output["course_completion"] = (
+            "maintained" if result["competencies"] and all(
+                x["status"] == "maintained" for x in result["competencies"])
+            else "not_yet_maintained")
+    else:
+        legacy = path.parent / "SYLLABUS.md"
+        output["legacy_syllabus_preview"] = (
+            legacy.read_text(encoding="utf-8")[:20000] if legacy.is_file() else None)
+        output["course_completion"] = "unknown_no_structured_plan"
+    print(json.dumps(output, ensure_ascii=False, indent=2))
+    return 0
+
+
 def cmd_course_list(a):
     root = _courses_root(a)
     registry = registry_read(root)
@@ -2575,6 +2642,8 @@ def main():
     mv.set_defaults(func=cmd_course_move)
     cl=cs.add_parser("list");cl.add_argument("--courses-root");cl.set_defaults(func=cmd_course_list)
     ov=cs.add_parser("overview");ov.add_argument("--courses-root");ov.set_defaults(func=cmd_course_overview)
+    journey=cs.add_parser("plan");journey.add_argument("--course-id",required=True)
+    journey.add_argument("--courses-root");journey.set_defaults(func=cmd_course_plan)
     scope=cs.add_parser("scope-set");scope.add_argument("--course-id",required=True)
     scope.add_argument("--from-file",required=True);scope.add_argument("--courses-root")
     scope.add_argument("--approve",action="store_true");scope.set_defaults(func=cmd_course_scope_set)
