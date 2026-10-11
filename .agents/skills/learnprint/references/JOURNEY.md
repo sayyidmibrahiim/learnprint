@@ -60,7 +60,14 @@ or real-life tasks, success checks, what is optional and what is unknown.
 Do not show 0% for a course with no observations; say "belum dinilai".
 If only legacy SYLLABUS.md exists, show the existing outline clearly, mark it
 as a legacy draft, then offer to adopt a structured plan. Do not silently
-overwrite syllabus/state. If NO outline exists, propose a concise plan visibly
+overwrite syllabus/state. Before requesting approval, build a complete
+unit JSON proposal, then run `course plan-set --course-id UUID
+--from-file PATH --dry-run`: this validates prerequisites, existing
+competency linkages and required fields WITHOUT touching Courses/.
+Every unit must have non-empty competency_ids. A non-graded baseline
+can be a separate diagnostic before units rather than an unlinked
+structured unit. Dry-run success is not permission to apply. If NO
+outline exists, propose a concise plan visibly
 and ask for feedback before persisting.
 A diagnostic cannot substitute for a learning roadmap. The learner may
 choose focus/depth/time constraints; default one meaningful unit at a time.

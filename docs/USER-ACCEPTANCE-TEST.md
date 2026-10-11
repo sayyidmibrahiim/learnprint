@@ -319,3 +319,18 @@ write is necessary:
 
 This contract is prompt-level UX: static tests cannot prove a live model
 will consistently follow it. Inspect actual host transcripts.
+
+## 15. Safe proposed syllabus and review preview (read-only)
+
+Before asking approval to adopt a structured course plan, save the proposed
+unit array outside Courses/ and run `python scripts/learnprint.py course
+plan-set --course-id ID --from-file PATH --dry-run`. The output must say
+`valid_preview`; no private state or backup is written. A unit without
+competency_ids is rejected instead of silently becoming a course unit.
+
+To preview retention without write approval, run `python scripts/learnprint.py
+course plan-reviews --dry-run`. It must not update reviews.json or lock files.
+The write version still requires standing scope and --approve. For Windows
+redirected terminals unable to print certain Unicode, output must escape the
+unrepresentable characters instead of crashing. `course resume --course-id ID`
+is a read-only selector and does not by itself start a lesson receipt.
