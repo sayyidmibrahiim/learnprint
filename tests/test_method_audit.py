@@ -201,7 +201,9 @@ class TestEffectiveMethod(unittest.TestCase):
             receipt = json.loads(original)
             receipt["effective_fingerprint"] = "sha256:" + "0" * 64
             p.write_text(json.dumps(receipt) + "\n", encoding="utf-8")
-            report = data("course", "method-audit", "--courses-root", root, "--course-id", cid)
+            result = run("course", "method-audit", "--courses-root", root, "--course-id", cid)
+            self.assertEqual(result.returncode, 2)
+            report = json.loads(result.stdout)
             self.assertEqual(report["overall"], "FAIL")
             self.assertEqual(report["checks"]["method_receipt"]["status"], "FAIL")
             p.write_bytes(original[:-1])
