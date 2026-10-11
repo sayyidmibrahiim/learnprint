@@ -1808,6 +1808,9 @@ def course_overview(root):
                 scored = progress(topic, ledger, now=now, policy=policy, registry=registry)
                 if not any(x["observations"] for x in scored["competencies"]):
                     item.update({"status": "not_assessed", "progress": None,
+                                 "excluded_observation_count": sum(
+                                     x.get("excluded_observations", 0)
+                                     for x in scored["competencies"]),
                                  "competency_count": len(scope),
                                  "next_action": "start topic baseline diagnostic"})
                 else:
@@ -2850,7 +2853,7 @@ def cmd_record(a):
     if not (w/"manifest.json").exists(): raise ValueError("Initialize workspace first")
     if getattr(a, "session_id", None):
         raise ValueError("--session-id is only supported for Courses workspaces")
-    if a.exclude_from_assessment:
+    if getattr(a, "exclude_from_assessment", False):
         raise ValueError("--exclude-from-assessment requires a Courses workspace")
     if a.task_type not in {"correction", "confirmation"} and _confusion_only(a.answer):
         raise ValueError("Confusion is not a scored response; pause and explain")
@@ -2880,7 +2883,7 @@ def _cmd_record_courses(a, w):
         raise ValueError("Explicit write approval required: --approve")
     if a.task_type not in {"correction", "confirmation"} and _confusion_only(a.answer):
         raise ValueError("Confusion is not a scored response; pause and explain")
-    if a.exclude_from_assessment and (a.task_type != "correction" or not a.corrects):
+    if getattr(a, "exclude_from_assessment", False) and (a.task_type != "correction" or not a.corrects):
         raise ValueError("--exclude-from-assessment requires --task-type correction and --corrects EVENT_ID")
     ap = read_approval(root)
     if not approval_allows(ap, "event-append"):
@@ -2924,13 +2927,13 @@ def _cmd_record_courses(a, w):
                 e[link] = val
         if getattr(a, "grader_source", None):
             e["grader_source"] = a.grader_source
-        if a.exclude_from_assessment:
+        if getattr(a, "exclude_from_assessment", False):
             e["exclude_from_assessment"] = True
         errs = validate_event(e)
         if errs:
             raise ValueError("Invalid event: " + "; ".join(errs))
         existing = ledger_read_trusted(lp / "events.jsonl", workspace_root=root)
-        if a.exclude_from_assessment:
+        if getattr(a, "exclude_from_assessment", False):
             target = next((x for x in existing if x["event_id"] == a.corrects), None)
             if target is None or target["task_type"] in {"correction", "confirmation"}:
                 raise ValueError("exclusion target must be an existing learner answer")
