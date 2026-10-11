@@ -1886,6 +1886,103 @@ def _lesson_activity(course_directory):
     return rows
 
 
+def _method_session_receipts(directory):
+    """Read-only strict validation of course-scoped, private method receipts."""
+    path = directory / "method-sessions.jsonl"
+    if not path.exists():
+        return []
+    raw = path.read_bytes()
+    if raw and not raw.endswith(b"\n"):
+        raise ValueError("method receipt ledger has truncated terminal record")
+    rows, seen = [], set()
+    for index, line in enumerate(raw.split(b"\n"), 1):
+        if not line:
+            continue
+        try:
+            row = json.loads(line.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise ValueError(f"method receipt ledger corrupt at line {index}: {exc}")
+        fields = ("session_id", "course_id", "effective_fingerprint",
+                  "legacy_fingerprint", "method_source", "started_at")
+        if (not isinstance(row, dict) or any(
+                not isinstance(row.get(key), str) or not row[key].strip()
+                for key in fields) or row["session_id"] in seen
+                or not isinstance(row.get("method_revision"), int)
+                or row["method_revision"] < 0):
+            raise ValueError(f"invalid/duplicate method session receipt line {index}")
+        try:
+            uuid.UUID(row["session_id"])
+        except (ValueError, AttributeError):
+            raise ValueError(f"invalid session UUID at line {index}")
+        seen.add(row["session_id"])
+        rows.append(row)
+    return rows
+
+
+def cmd_course_session_start(a):
+    """Capture configured method identity; NOT proof that the AI used it."""
+    root = _courses_root(a)
+    _require(a, root, "state-update")
+    with workspace_lock(root):
+        course, path, _ = _registered_course(root, a.course_id)
+        method = effective_method(root)
+        sessions = _method_session_receipts(path.parent)
+        receipt = {"session_id": str(uuid.uuid4()),
+                   "course_id": course["course_id"],
+                   "method_source": method["source"],
+                   "method_revision": method["method_revision"],
+                   "effective_fingerprint": method["effective_fingerprint"],
+                   "legacy_fingerprint": method["fingerprint"],
+                   "started_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                   "evidence_kind": "configuration_receipt_only"}
+        target = path.parent / "method-sessions.jsonl"
+        append_event_line(target, json.dumps(receipt, ensure_ascii=False))
+    print(json.dumps(receipt, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_course_method_audit(a):
+    """Evaluate actual canonical artifacts conservatively, without mutations."""
+    import importlib.util
+    module_path = ROOT / "scripts" / "learnprint_audit.py"
+    spec = importlib.util.spec_from_file_location("learnprint_audit", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    root = _courses_root(a)
+    course, path, registry = _registered_course(root, a.course_id)
+    state = load(path)
+    scope = _validated_course_scope(state, a.course_id, path)
+    units = state.get("syllabus", [])
+    if not isinstance(units, list):
+        raise ValueError("syllabus is not an array")
+    if units:
+        _journey_module().validate_units(units, [c["id"] for c in scope])
+    method = effective_method(root)
+    sessions = _method_session_receipts(path.parent)
+    if a.session_id and not any(
+            s["session_id"] == a.session_id and s["course_id"] == a.course_id
+            for s in sessions):
+        raise ValueError("unknown session_id for selected course")
+    activities = _lesson_activity(path.parent)
+    ledger = ledger_read_trusted(root / ".learnprint" / "events.jsonl",
+                                 workspace_root=root)
+    transcript = None
+    if a.transcript_file:
+        tp = Path(a.transcript_file)
+        if not tp.is_file() or tp.is_symlink():
+            raise ValueError("transcript must be an existing regular file, not symlink")
+        if tp.stat().st_size > 5_000_000:
+            raise ValueError("transcript exceeds 5 MB audit limit")
+        payload = tp.read_bytes()
+        transcript = {"sha256": hashlib.sha256(payload).hexdigest(),
+                      "bytes": len(payload), "provenance": "user_supplied_unverified"}
+    report = module.build_report(
+        a.course_id, method, sessions, units, activities, ledger,
+        selected_session=a.session_id, transcript=transcript)
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 2 if report["overall"] == "FAIL" else 0
+
+
 def cmd_course_lesson_log(a):
     """Record what was actually discussed; never assign a competence score."""
     root = _courses_root(a)
@@ -2781,6 +2878,12 @@ def main():
     ov=cs.add_parser("overview");ov.add_argument("--courses-root");ov.set_defaults(func=cmd_course_overview)
     journey=cs.add_parser("plan");journey.add_argument("--course-id",required=True)
     journey.add_argument("--courses-root");journey.set_defaults(func=cmd_course_plan)
+    session=cs.add_parser("session-start");session.add_argument("--course-id",required=True)
+    session.add_argument("--courses-root");session.add_argument("--approve",action="store_true")
+    session.set_defaults(func=cmd_course_session_start)
+    audit=cs.add_parser("method-audit");audit.add_argument("--course-id",required=True)
+    audit.add_argument("--courses-root");audit.add_argument("--session-id")
+    audit.add_argument("--transcript-file");audit.set_defaults(func=cmd_course_method_audit)
     ll=cs.add_parser("lesson-log");ll.add_argument("--course-id",required=True)
     ll.add_argument("--unit-id",required=True);ll.add_argument("--kind",required=True,
         choices=sorted(LESSON_ACTIVITY_KINDS))
