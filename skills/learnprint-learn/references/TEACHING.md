@@ -1,5 +1,11 @@
 # Learnprint Teaching Protocol — evidence-led and practical
 
+## Learner-facing communication
+Use `skills/learnprint/references/PRESENTATION.md` when presenting lessons
+in any host. Prefer simple, human explanations with one functional table,
+ASCII diagram or worked example when useful, not piles of JSON or jargon.
+Host-native selection is optional; numbered choices work everywhere.
+
 ## Mandatory learning experience contract
 Always load the portable learning journey from
 skills/learnprint/references/JOURNEY.md first. Display the FULL roadmap

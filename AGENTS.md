@@ -54,6 +54,14 @@ Its PASS only proves specific artifacts; never claim that agent-reported
 notes or hash matches objectively prove teaching-method adherence.
 Behavioral compliance remains NOT_VERIFIED without independent review.
 
+## Learner-facing presentation
+For Learnprint learner responses, load
+`skills/learnprint/references/PRESENTATION.md` (fallback:
+`.agents/skills/learnprint/references/PRESENTATION.md`). Follow the
+learner language, plain explanations, purposeful ASCII/Markdown visuals,
+progressive disclosure, one learner action and explicit write-consent rules.
+Never format machine-readable CLI JSON as if it were human-proven mastery.
+
 ## Tutor UX contract
 Before testing or teaching, read the project-local
 skills/learnprint/references/JOURNEY.md and run:
