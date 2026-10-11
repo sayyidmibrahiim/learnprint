@@ -209,6 +209,48 @@ class TestEffectiveMethod(unittest.TestCase):
                              "NOT_VERIFIED")
             self.assertEqual(len((root / ".learnprint" / "events.jsonl").read_bytes()), 0)
 
+    def test_provisional_profile_keeps_founder_method_until_assessed(self):
+        # Provisional is a valid profile status, but it is not a completed
+        # assessment and must not silently activate a private draft method.
+        with tempfile.TemporaryDirectory() as d:
+            root = self.setup_workspace(d)
+            profile_path = root / ".learnprint" / "learner" / "profile.json"
+            profile = json.loads(profile_path.read_text(encoding="utf-8"))
+            profile["assessment_status"] = "provisional"
+            profile["instruction_defaults"] = {"teach_one_unit_at_a_time": False}
+            profile["preferences"] = {"language": "draft-only preference"}
+            profile_path.write_text(json.dumps(profile), encoding="utf-8")
+            reported = data("learner", "status", "--courses-root", root)
+            resolved = data("learner", "method", "--courses-root", root)
+            founder = data("learner", "method", "--courses-root", Path(d) / "Fresh")
+            self.assertEqual(reported["method_source"], "founder_default")
+            self.assertEqual(resolved["source"], "founder_default")
+            self.assertEqual(resolved["assessment_status"], "provisional")
+            self.assertEqual(resolved["instruction_defaults"], founder["instruction_defaults"])
+            self.assertEqual(resolved["preferences"], founder["preferences"])
+
+    def test_foreign_course_receipt_is_rejected_before_audit_or_append(self):
+        # A course-local receipt ledger with a foreign course ID is corrupt,
+        # not evidence that an ordinary session was simply never recorded.
+        with tempfile.TemporaryDirectory() as d:
+            root, course = self.setup_course(d)
+            cid = course["course_id"]
+            data("course", "session-start", "--courses-root", root,
+                 "--course-id", cid, "--approve")
+            receipts = root / course["rel_path"] / "method-sessions.jsonl"
+            row = json.loads(receipts.read_text(encoding="utf-8"))
+            row["course_id"] = str(uuid.uuid4())
+            receipts.write_text(json.dumps(row) + "\n", encoding="utf-8")
+            original = receipts.read_bytes()
+            audit = run("course", "method-audit", "--courses-root", root,
+                        "--course-id", cid)
+            self.assertEqual(audit.returncode, 2)
+            self.assertIn("receipt", audit.stderr.lower())
+            refused = run("course", "session-start", "--courses-root", root,
+                          "--course-id", cid, "--approve")
+            self.assertEqual(refused.returncode, 2)
+            self.assertEqual(receipts.read_bytes(), original)
+
     def test_method_drift_detected_and_log_corruption_refused(self):
         with tempfile.TemporaryDirectory() as d:
             root, course = self.setup_course(d)
