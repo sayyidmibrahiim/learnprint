@@ -2089,8 +2089,20 @@ def cmd_course_plan(a):
 
 
 def cmd_course_plan_set(a):
-    """Approved, validated plan update. Back up prior state; never erase evidence."""
+    """Preview validated plan without writes, or apply with approval and backup."""
     root = _courses_root(a)
+    if a.dry_run:
+        course, path, _ = _registered_course(root, a.course_id)
+        current = load(path)
+        scope = _validated_course_scope(current, a.course_id, path)
+        units = load(a.from_file)
+        helper = _journey_module()
+        order = helper.validate_units(units, [c["id"] for c in scope])
+        helper.preserve_existing(current.get("syllabus", []), units)
+        print(json.dumps({"status": "valid_preview", "course_id": a.course_id,
+                          "unit_count": len(units), "ordered_unit_ids": order,
+                          "files_modified": 0}, ensure_ascii=False, indent=2))
+        return 0
     _require(a, root, "state-update")
     with workspace_lock(root):
         c, path, _registry = _registered_course(root, a.course_id)
@@ -2186,6 +2198,12 @@ def cmd_course_resume(a):
     root = _courses_root(a)
     registry = registry_read(root)
     courses = registry.get("courses", [])
+    if a.course_id:
+        selected = next((c for c in courses if c["course_id"] == a.course_id), None)
+        if selected is None:
+            raise ValueError("unknown course_id: " + a.course_id)
+        print(json.dumps({"status": "found", "course": selected}, ensure_ascii=False, indent=2))
+        return 0
     if not courses:
         print(json.dumps({"status": "none", "note": "no courses yet; start a new one"}))
         return 0
@@ -2412,29 +2430,35 @@ def cmd_course_revoke_approval(a):
     return 0
 
 
+def _compute_course_review_plan(root):
+    registry = registry_read(root)
+    ledger = ledger_read_trusted(root / ".learnprint" / "events.jsonl", workspace_root=root)
+    topics = _course_topics(root, registry)
+    for t in topics:
+        problems = validate_topic(t)
+        if problems:
+            raise ValueError(f"invalid course state: {problems}")
+    target = root / ".learnprint" / "reviews.json"
+    stored = {}
+    if target.exists():
+        try:
+            stored = json.loads(target.read_text(encoding="utf-8"))
+        except ValueError:
+            stored = {}
+    return reviews_from_events(topics, ledger, stored_reviews=stored or None), target
+
+
 def cmd_course_plan_reviews(a):
     root = _courses_root(a)
+    if a.dry_run:
+        result, _ = _compute_course_review_plan(root)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
     _require(a, root, "state-update")
     with workspace_lock(root):
-        registry = registry_read(root)
-        ledger = ledger_read_trusted(root / ".learnprint" / "events.jsonl", workspace_root=root)
-        topics = _course_topics(root, registry)
-        for t in topics:
-            errs = validate_topic(t)
-            if errs:
-                raise ValueError(f"invalid course state: {errs}")
-        rp = root / ".learnprint" / "reviews.json"
-        stored = {}
-        if rp.exists():
-            try:
-                stored = json.loads(rp.read_text(encoding="utf-8"))
-            except ValueError:
-                stored = {}
-        result = reviews_from_events(topics, ledger, stored_reviews=stored or None)
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        if a.dry_run:
-            return 0
+        result, rp = _compute_course_review_plan(root)
         atomic_write(rp, json.dumps(result, ensure_ascii=False, indent=2) + "\n")
+    print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -2865,6 +2889,12 @@ def _cmd_record_courses(a, w):
 
 
 def main():
+    # Preserve active encoding; escape unsupported Unicode on limited Windows pipes.
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(errors="backslashreplace")
+        except (OSError, ValueError):
+            pass
     p=argparse.ArgumentParser(description=__doc__)
     sub=p.add_subparsers(dest="cmd",required=True)
     v=sub.add_parser("validate");v.add_argument("--profile",required=True);v.add_argument("--topic");v.add_argument("--events");v.set_defaults(func=cmd_validate)
@@ -2928,13 +2958,16 @@ def main():
     ll.add_argument("--approve",action="store_true");ll.set_defaults(func=cmd_course_lesson_log)
     ps=cs.add_parser("plan-set");ps.add_argument("--course-id",required=True)
     ps.add_argument("--from-file",required=True);ps.add_argument("--courses-root")
-    ps.add_argument("--approve",action="store_true");ps.set_defaults(func=cmd_course_plan_set)
+    ps.add_argument("--approve",action="store_true")
+    ps.add_argument("--dry-run",action="store_true")
+    ps.set_defaults(func=cmd_course_plan_set)
     scope=cs.add_parser("scope-set");scope.add_argument("--course-id",required=True)
     scope.add_argument("--from-file",required=True);scope.add_argument("--courses-root")
     scope.add_argument("--approve",action="store_true");scope.set_defaults(func=cmd_course_scope_set)
     db=cs.add_parser("dashboard");db.add_argument("--approve",action="store_true")
     db.add_argument("--courses-root");db.set_defaults(func=cmd_course_dashboard)
-    rs=cs.add_parser("resume");rs.add_argument("--courses-root");rs.set_defaults(func=cmd_course_resume)
+    rs=cs.add_parser("resume");rs.add_argument("--courses-root")
+    rs.add_argument("--course-id");rs.set_defaults(func=cmd_course_resume)
     cv=cs.add_parser("validate");cv.add_argument("--repair",action="store_true")
     cv.add_argument("--approve",action="store_true");cv.add_argument("--courses-root")
     cv.set_defaults(func=cmd_course_validate)
