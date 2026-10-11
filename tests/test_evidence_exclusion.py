@@ -48,7 +48,13 @@ class TestEvidenceExclusion(unittest.TestCase):
     def counts(self, root):
         result = run("course", "overview", "--courses-root", root)
         self.assertEqual(result.returncode, 0, result.stderr)
-        return json.loads(result.stdout)["courses"][0]["progress"]["competencies"][0]
+        course = json.loads(result.stdout)["courses"][0]
+        if course["progress"] is None:
+            self.assertEqual(course["status"], "not_assessed")
+            return {"observations": 0,
+                    "excluded_observations": course.get("excluded_observation_count", 0),
+                    "status": "unknown"}
+        return course["progress"]["competencies"][0]
 
     def test_old_confusion_remains_readable_and_explicitly_excludable(self):
         with tempfile.TemporaryDirectory() as d:
