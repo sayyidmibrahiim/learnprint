@@ -345,6 +345,10 @@ LOCK_TABLE = {
     "course dashboard": {"mutates": True, "locks": True},
     "course resolve": {"mutates": False, "locks": False},
     "course list": {"mutates": False, "locks": False},
+    "learner method": {"mutates": False, "locks": False},
+    "course plan": {"mutates": False, "locks": False},
+    "course plan-set": {"mutates": True, "locks": True},
+    "course lesson-log": {"mutates": True, "locks": True},
     "report": {"mutates": False, "locks": False},
 }
 
