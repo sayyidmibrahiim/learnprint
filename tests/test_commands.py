@@ -60,22 +60,51 @@ class TestLearnerMethodLifecycle(unittest.TestCase):
             self.assertEqual(cli("course", "init", "--courses-root", root, "--approve").returncode, 0)
             start = read_json(cli("learner", "assessment-start", "--courses-root", root, "--approve"))
             self.assertEqual(start["assessment_offer"], "in_progress")
-            fail = cli("learner", "assessment-complete", "--courses-root", root, "--approve")
-            self.assertEqual(fail.returncode, 2)
+            self.assertEqual(cli("learner", "assessment-complete",
+                                 "--courses-root", root, "--approve").returncode, 2)
             profile_path = root / ".learnprint" / "learner" / "profile.json"
             profile = json.loads(profile_path.read_text(encoding="utf-8"))
-            candidate = dict(profile)
-            candidate.update({"assessment_status": "assessed",
-                              "observed_claims": [
-                                  {"id": "c1", "claim": "Explained a concept independently",
-                                   "category": "observed", "evidence_ids": ["e1"]}],
-                              "evidence": [
-                                  {"id": "e1", "origin": "observed_task",
-                                   "description": "Independent response to a real task",
-                                   "verification": "observed", "source": "private assessment"}],
-                              "instruction_defaults": {"teach_one_unit_at_a_time": True}})
+
+            def two_observations():
+                first = read_json(cli("learner", "assessment-record", "--courses-root", root,
+                                      "--question", "Explain a known concept",
+                                      "--answer", "A genuine answer from a test learner",
+                                      "--task-type", "prior_knowledge", "--approve"))
+                second = read_json(cli("learner", "assessment-record", "--courses-root", root,
+                                       "--question", "Solve a new variation",
+                                       "--answer", "A second distinct learner answer",
+                                       "--task-type", "transfer", "--approve"))
+                return first, second
+
+            def candidate_with_observations(first, second, method):
+                obj = dict(profile)
+                obj.update({"assessment_status": "assessed",
+                            "observed_claims": [{"id": "c1",
+                                "claim": "Learner attempted concept and transfer",
+                                "category": "observed", "evidence_ids": ["e1", "e2"]}],
+                            "evidence": [
+                                {"id": "e1", "origin": "observed_task",
+                                 "description": first["observed_answer"],
+                                 "verification": "observed",
+                                 "source": "assessment-event:" + first["event_id"]},
+                                {"id": "e2", "origin": "observed_task",
+                                 "description": second["observed_answer"],
+                                 "verification": "observed",
+                                 "source": "assessment-event:" + second["event_id"]}],
+                            "instruction_defaults": {"teach_one_unit_at_a_time": method}})
+                return obj
+
+            a, b = two_observations()
+            recorded = read_json(cli("learner", "assessment-history", "--courses-root", root))
+            self.assertEqual([x["event_id"] for x in recorded["events"]],
+                             [a["event_id"], b["event_id"]])
+            continued = read_json(cli("learner", "assessment-start",
+                                      "--courses-root", root, "--approve"))
+            self.assertEqual(continued["assessment_session_id"], start["assessment_session_id"])
+            self.assertEqual(continued["assessment_response_count"], 2)
             candidate_path = profile_path.with_name("profile-candidate.json")
-            candidate_path.write_text(json.dumps(candidate) + "\n", encoding="utf-8")
+            candidate_path.write_text(json.dumps(candidate_with_observations(a,b,True))+"\n",
+                                      encoding="utf-8")
             complete = read_json(cli("learner", "assessment-complete", "--courses-root", root, "--approve"))
             self.assertEqual(complete["profile_id"], start["profile_id"])
             self.assertEqual(complete["assessment_status"], "assessed")
@@ -85,10 +114,14 @@ class TestLearnerMethodLifecycle(unittest.TestCase):
             self.assertTrue(profile_path.with_name("profile.previous-0000.json").exists())
             self.assertEqual(cli("learner", "assessment-start", "--courses-root", root, "--approve").returncode, 2)
             self.assertEqual(cli("learner", "assessment-complete", "--courses-root", root, "--approve").returncode, 2)
-            # Reassessment preserves the same stable identity and evidence.
-            read_json(cli("learner", "assessment-start", "--courses-root", root, "--reassess", "--approve"))
-            candidate["instruction_defaults"] = {"teach_one_unit_at_a_time": False}
-            candidate_path.write_text(json.dumps(candidate) + "\n", encoding="utf-8")
+
+            # Reassessment: new session, same learner ID, previous profile preserved.
+            second_start = read_json(cli("learner", "assessment-start",
+                                        "--courses-root", root, "--reassess", "--approve"))
+            self.assertNotEqual(second_start["assessment_session_id"], start["assessment_session_id"])
+            a2, b2 = two_observations()
+            candidate_path.write_text(json.dumps(candidate_with_observations(a2,b2,False))+"\n",
+                                      encoding="utf-8")
             updated = read_json(cli("learner", "assessment-complete", "--courses-root", root, "--approve"))
             self.assertEqual(updated["method_revision"], 2)
             self.assertEqual(updated["profile_id"], start["profile_id"])
