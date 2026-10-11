@@ -2027,7 +2027,12 @@ def collect_workspace_problems(root, registry):
             problems.append(f"unreadable state.json for course {c.get('course_id')}: {exc}")
             continue
         try:
-            _validated_course_scope(st, c.get("course_id"), sp)
+            scope = _validated_course_scope(st, c.get("course_id"), sp)
+            syllabus = st.get("syllabus", [])
+            if not isinstance(syllabus, list):
+                raise ValueError("syllabus must be a list")
+            if syllabus:
+                _journey_module().validate_units(syllabus, [x["id"] for x in scope])
         except (ValueError, TypeError) as exc:
             problems.append(f"invalid course state for {c.get('rel_path')}: {exc}")
     active = registry.get("active_course_id")
