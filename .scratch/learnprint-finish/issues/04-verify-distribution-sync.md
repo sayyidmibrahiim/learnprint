@@ -41,3 +41,28 @@ OK).
 ## Commit (only if drifted)
 
 `chore: sync claude-plugin distribution copies`
+
+## Comments
+
+- 2026-10-17 builder: DRIFTED on first pass → resynced per ticket (W6
+  mechanical copy source → distribution, zero hand edits).
+- Compared pairs (7): assess/SKILL.md, assess/references/ASSESSMENT.md,
+  learn/SKILL.md, learn/references/{founder-default.json (vs skills copy AND
+  vs profiles/founder-default.json), REVIEW.md, TEACHING.md}.
+- First-pass SHA256: 3 DRIFTED (assess/SKILL.md, learn/SKILL.md,
+  TEACHING.md — distribution copies stale since initial commit c4a433b;
+  sources carried workspace-era additions: unified-skill integration, course
+  workspace/context-budget sections, journey/presentation contract,
+  correction workflow, portability rewrite). 4 IN-SYNC.
+- After copy: all 7 pairs byte-identical at BOTH worktree and committed-blob
+  level (blob SHAs equal: assess/SKILL 95f719280a8a, learn/SKILL
+  f406ac526170, TEACHING 64751d9b066e).
+- `python scripts/check_package.py` → PACKAGING OK (re-run post-copy).
+- Frozen trees untouched: `git diff --name-only` shows no paths under
+  scripts|schemas|profiles|protocols|skills|rules.
+- Commit: `f5ee5ad` — `chore: sync claude-plugin distribution copies`
+  (3 files, +60/-1).
+- Status: resolved.
+- Note for the planner: nothing runs a sync check (ticket premise); future
+  drift would go unnoticed again — consider a sync-check ticket (not filed
+  here per D7-only-for-defects policy).

@@ -44,3 +44,16 @@ regression guard for `test_core`).
 ## Commit
 
 `test: run legacy-suite guard via subprocess in progress regression meta-test`
+
+## Comments
+
+- 2026-10-17 builder: implemented exactly as prescribed (5-line subprocess
+  guard; `Path` already imported at line 4; subprocess/sys imported locally).
+- `python -m pytest tests/test_progress_regression.py -q` → `38 passed`
+  (standalone run, the guard's whole point).
+- `python -m pytest tests/ -q` → `283 passed` (0 failed; baseline was
+  282/283).
+- Diff scope: only `tests/test_progress_regression.py` (+5/-7).
+- Commit: `a654c1e` — `test: run legacy-suite guard via subprocess in
+  progress regression meta-test`.
+- Status: resolved.

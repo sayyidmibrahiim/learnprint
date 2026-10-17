@@ -30,3 +30,16 @@ Stage exactly these five paths (never `git add -A`):
 ## Commit
 
 `docs: add agent workflow references and repo domain glossary`
+
+## Comments
+
+- 2026-10-17 builder: staged exactly the five named paths; committed AS-IS
+  (zero content edits; AGENTS.md diff was the +15-line "Agent skills"
+  section, verified before staging).
+- `git show --stat HEAD` → AGENTS.md +15, CONTEXT.md +33, docs/agents/domain.md
+  +51, docs/agents/issue-tracker.md +30, docs/agents/triage-labels.md +15;
+  exactly those five files, 144 insertions.
+- `git status --short` no longer lists any of the five paths.
+- Commit: `bf5cff1` — `docs: add agent workflow references and repo domain
+  glossary`.
+- Status: resolved.

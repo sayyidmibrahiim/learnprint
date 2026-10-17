@@ -38,3 +38,31 @@ Then VERIFY it actually rejects (do not trust a silent success):
 
 None — the hook lives in `.git/hooks/` (untracked by design). If the run
 produces any tracked-file diff, STOP and report instead of committing.
+
+## Comments
+
+- 2026-10-17 builder: hook installed + verified; probe rejected; cleaned up.
+  Two findings filed (see below). No engine code touched.
+- The literal ticket command `python scripts/install.py --hooks --approve`
+  FAILS (exit 2: `--target` required; `--dest`/`--self` required). Adapted to
+  the existing CLI surface: `python scripts/install.py --target opencode
+  --self --hooks --approve` → `INSTALLED pre-commit privacy hook.` (exit 0).
+  Discrepancy filed as ticket 08 (same abbreviated command quoted in
+  spec D8, ADR-0001, rules/PRIVACY.md, old hardening plan).
+- Post-install `git status --short`: no tracked-file diff produced (as the
+  ticket required).
+- `.git/hooks/pre-commit` exists and equals the learnprint privacy hook
+  (HOOK_SCRIPT: rejects staged `^Courses/` and personal-skill paths).
+- Probe: `git add -f Courses/_hook_probe.txt` → commit attempt printed
+  "ERROR: Attempting to commit private learner data. Remove with: git reset
+  HEAD <file>", exit 1; HEAD unchanged (`f5ee5ad`). REJECTED as required.
+- Cleanup: probe unstaged (`git reset HEAD`) and deleted; `git status
+  --short` shows only tracker-file bookkeeping — no probe leftovers.
+- Finding B: `Courses/` ALREADY existed before the probe (`mkdir` failed:
+  "already exists") and contains real Oct-11 learner data. Left completely
+  intact; owner decision filed as ticket 09 (this is why the literal
+  "no Courses/ dir" phrasing of the acceptance cannot be met by removal:
+  the dir is not a probe leftover). Probe leftovers: none.
+- Acceptance: hook exists ✓; force-staged probe rejected ✓; no probe
+  leftovers ✓ (with the ticket-09 caveat above).
+- Status: resolved with caveats (tickets 08, 09 open, both ready-for-human).
