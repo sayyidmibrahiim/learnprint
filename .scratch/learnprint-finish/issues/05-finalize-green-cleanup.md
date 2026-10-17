@@ -44,3 +44,25 @@ remove the completed plan files (repo rule: never leave finished plan files).
 ## Commit
 
 `chore: remove completed hardening plans`
+
+## Comments
+
+- 2026-10-17 builder: gate re-run on HEAD=68ac45e (fresh runs, all three):
+  - `python -m pytest tests/ -q` → **283 passed** (exit 0)
+  - `python scripts/check_package.py` → **PACKAGING OK: all SKILL.md frontmatter and size checks passed** (exit 0)
+  - `python scripts/learnprint.py validate --profile profiles/founder-default.json` → **VALID** (exit 0)
+- Removed both completed plans (exact paths): `git rm
+  plan/learnprint-hardening-workspace.md plan/completion-polish.md`;
+  commit `6ca7072` — `chore: remove completed hardening plans`.
+- `plan/` gone from disk and tracked tree.
+- `.scratch/learnprint-finish/` still tracked (10 files: spec + issues 01-09).
+- This evidence file was committed right after via
+  `docs: record ticket 05 evidence`; `git status --short` clean.
+- Batch review: performed INLINE by the builder (reviewer subagent unavailable
+  — its configured model is missing in this environment). No blocking
+  findings; frozen-tree invariant verified across fac156c..HEAD; reduced
+  review independence noted for the PR.
+- Open items carried to ticket 06 (owner present): ticket 08 (non-runnable
+  hook command quoted in docs; non-blocking) and ticket 09 (pre-existing
+  `Courses/` workspace decision; must be resolved before 06's final check).
+- Status: resolved.
