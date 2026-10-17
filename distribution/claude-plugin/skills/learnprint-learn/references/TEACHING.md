@@ -1,5 +1,21 @@
 # Learnprint Teaching Protocol — evidence-led and practical
 
+## Learner-facing communication
+Use `skills/learnprint/references/PRESENTATION.md` when presenting lessons
+in any host. Prefer simple, human explanations with one functional table,
+ASCII diagram or worked example when useful, not piles of JSON or jargon.
+Host-native selection is optional; numbered choices work everywhere.
+
+## Mandatory learning experience contract
+Always load the portable learning journey from
+skills/learnprint/references/JOURNEY.md first. Display the FULL roadmap
+and concrete hands-on outcomes before any diagnostic. Read effective method
+using learner method, not an assumption from profile names. Learner confusion
+interrupts testing; no scores for "still confused". Address the real question,
+check and propose syllabus prerequisites, teach with one consistent mapped
+analogy (or literal example), and resume testing ONLY with a fresh task.
+Every unit ends with learner-visible evidence and next action.
+
 ## Start state order (must follow)
 1. Local validated `learner/profile.json` if present and user-approved.
 2. Otherwise packaged anonymized founder default.
@@ -33,4 +49,18 @@ The learner may request 'why' questions at any point. Triage `blocking`, `releva
 Use 1d, 3d, 7d, 21d as *suggested initial intervals*, updated according to observed difficulty and gaps. Each review requires active recall without seeing answer, novel enough examples, and feedback. If no scheduler, write review queue only; do not claim reminders will fire.
 
 ## Portability
-After each session, update `manifest.json`, one `topics/<slug>/state.json`, `events.jsonl`, `reviews.json` and a concise human-readable handoff. If filesystem unavailable, output a portable `LEARNING_STATE` block the learner can save. Never claim an artifact was written unless a tool verifies it. Use small-context recovery rather than relying on long conversation history.
+For the canonical Courses/ workspace, use the deterministic CLI to update
+the current course's state.json (via validated scope-set where applicable),
+Courses/.learnprint/events.jsonl and the review queue, plus the course HANDOFF.md.
+The older manifest.json/topics layout applies only to legacy workspaces,
+not new Courses/ learners. If filesystem unavailable, output a portable `LEARNING_STATE` block the learner can save. Never claim an artifact was written unless a tool verifies it. Use small-context recovery rather than relying on long conversation history.
+
+## Repairing a historical mistaken score
+
+Do not secretly rewrite or purge old learner evidence, including a prior
+"masih gak ngerti" answer graded as 0. Explain the discrepancy and first
+obtain event-specific learner approval. Only then use `record --task-type
+correction --corrects EVENT_ID --exclude-from-assessment --approve` with the
+same course/topic/competency, a clear reason, and correct standing write scope.
+This retains the original row; no automatic evidence correction occurs when
+loading Learnprint. Treat the corrective metadata as non-mastery evidence.
