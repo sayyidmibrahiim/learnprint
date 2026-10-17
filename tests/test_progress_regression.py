@@ -312,13 +312,11 @@ class TestProgressRegression(unittest.TestCase):
                          "maintained")
 
     def test_existing_16_tests_pass(self):
-        loader = unittest.TestLoader()
-        try:
-            suite = loader.loadTestsFromName("tests.test_core")
-        except ImportError:
-            suite = loader.loadTestsFromName("test_core")
-        result = unittest.TextTestRunner(verbosity=0).run(suite)
-        self.assertTrue(result.wasSuccessful())
+        import subprocess, sys
+        root = Path(__file__).resolve().parents[1]
+        r = subprocess.run([sys.executable, "-m", "unittest", "tests.test_core"],
+                           cwd=root, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, msg=r.stderr[-2000:])
 
 
 if __name__ == "__main__":
