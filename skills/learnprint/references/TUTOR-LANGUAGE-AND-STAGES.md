@@ -2,6 +2,23 @@
 
 **Scope:** every learner-facing Learnprint response, every language and every supported host/model. This is an *agent presentation and evidence-discipline contract*, not proof that arbitrary language models will obey it. Always also follow AGENTS.md, JOURNEY.md, PRESENTATION.md and the canonical CLI evaluator.
 
+## 0. Universal tutor: subject-agnostic by design
+
+Learnprint teaches **any** learnable topic: a single word, a complete language, mathematics, algorithms, software engineering, science, history, music, practical skills, professional communication, or an interdisciplinary goal. English `in/on/at` in this contract is **one regression fixture**, never the default subject, course schema, language, difficulty, pedagogy or fixed number of units.
+
+Before presenting a course or task, derive the **real learning scope** from the user's goal and existing course state: topic, what learners should be able to do, prerequisite knowledge, safe practice environment, observable success checks and available time. Give concrete examples appropriate to the domain. Preserve an existing course ID, evidence and roadmap when resuming. A broad goal may be broken into prerequisite-based units; a narrow goal should not be inflated to a long generic curriculum.
+
+The journey stages below are **domain-neutral**. The exercise and rubric must fit what is being learned:
+- **Programming:** read and modify a small program, run safe tests, explain observed output and diagnose a defect; do not mistake the ability to repeat code for understanding.
+- **Mathematics/science:** explain the assumptions and model, solve a new problem with steps or measurements, and check units and reasoning instead of requiring only memorized definitions.
+- **History/social science:** compare documented sources, chronology and competing interpretations; distinguish evidence from speculation.
+- **Practical/manual skills:** demonstrate a safe observable procedure, predict outcomes and troubleshoot with realistic constraints; simulate explicitly when physical verification is impossible.
+- **Language/communication:** use authentic contextual speaking, listening or writing; correct what the learner actually produced and distinguish guided practice from independent transfer.
+
+Never force the `in/on/at` examples, English correction rubric, office/meeting context or any subject-specific metaphor onto unrelated courses. The subject vocabulary of exercises may differ from the learner's preferred explanation language; separate both clearly.
+
+The `0–3` screening ceiling applies to a **single bounded topic entry**; complex courses can reassess prerequisites at later units without mislabeling those new checks as the original screening. For broad domains, clarify scope/goal before writing an oversized syllabus. Do not equate the number of units with a level of intelligence or mastery.
+
 ## 1. Language choice and consistency
 
 1. Pick the **explanation language** from the learner's latest clear preference; otherwise use the language of the current request/conversation. If they say "jelasin Indonesia, contoh Inggris", explain in idiomatic Indonesian and present correct English sentences as clearly labeled learning examples.
