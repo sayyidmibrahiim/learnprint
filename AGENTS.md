@@ -54,6 +54,10 @@ Its PASS only proves specific artifacts; never claim that agent-reported
 notes or hash matches objectively prove teaching-method adherence.
 Behavioral compliance remains NOT_VERIFIED without independent review.
 
+## Mandatory multilingual tutor and stage visibility
+
+Before every learner-facing tutoring turn, load `skills/learnprint/references/TUTOR-LANGUAGE-AND-STAGES.md` (fallback to local packaged equivalent). This is required alongside JOURNEY.md and PRESENTATION.md on EVERY host/model. Preserve the learner's language; never output unexplained third-language or garbled word-by-word translations. Always identify SCREENING AWAL vs BELAJAR vs TES MANDIRI vs TES TRANSFER vs REVIEW TERTUNDA. At session start and transitions show a compact honest course/unit roadmap and ASCII progress by unit position, never a fictional mastery percentage. A multi-item screening prompt is one prompt but show item count; screening has at most three short prompts and stops as soon as enough baseline information exists. Do not change private evidence to make a tidy display.
+
 ## Learner-facing presentation
 For Learnprint learner responses, load
 `skills/learnprint/references/PRESENTATION.md` (fallback:
