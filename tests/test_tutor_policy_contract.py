@@ -55,7 +55,7 @@ class TutorPolicyContractTests(unittest.TestCase):
             "JEDA / KLARIFIKASI",
             "0–3",
             "[#--]",
-            "not a quota",
+            "not a mandatory quota",
             "unit-position",
         ):
             with self.subTest(marker=marker):
