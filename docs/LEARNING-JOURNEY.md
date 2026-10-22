@@ -1,5 +1,8 @@
 # Learner journey: plan -> diagnose -> teach -> practice -> test -> review
 
+**Required tutor output:** also follow [language and stages](../skills/learnprint/references/TUTOR-LANGUAGE-AND-STAGES.md). Explicitly distinguish diagnostic **SCREENING AWAL** (at most 3 short prompts; may end early) from **BELAJAR**, **TES MANDIRI**, **TES TRANSFER**, and **REVIEW TERTUNDA**. Use idiomatic selected language, target-language exercises in clear full sentences and an ASCII unit-position roadmap without invented mastery percentages. Host/model adherence requires live human UAT, not just unit tests.
+
+
 Learnprint must show the learner a roadmap BEFORE asking diagnostic questions.
 
 1. Load effective method from 'learner method' and show source plus short fingerprint.
