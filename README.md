@@ -4,6 +4,12 @@
 
 > Status: **public-ready release candidate**. The founder profile reflects a real but informal conversational assessment; it is **not** a clinical, neurological, psychometric, or scientifically validated optimal learning style. Cross-platform Python CLI tests have passed; full live learning remains subject to user acceptance on each host. See [VALIDATION.md](docs/VALIDATION.md).
 
+## Tutor language and transparent learning stages
+
+Tutor responses must use the learner's chosen explanation language fluently and separate any target-language examples. Every stage change identifies **screening**, **learning**, **independent test**, **transfer** or **delayed review**. Screening is **at most three short topic-specific prompts**, not three mandatory tests. On resume the tutor displays the complete syllabus and a small ASCII **unit-position** indicator; measured learning progress always comes from the canonical evidence evaluator, never the unit number.
+
+See [Tutor language and stage policy](skills/learnprint/references/TUTOR-LANGUAGE-AND-STAGES.md), [live acceptance scenarios](docs/TUTOR-LANGUAGE-STAGES-UAT.md) and [open issues tracker](docs/TUTOR-FIX-TRACKER.md). These are prompt-level requirements; real host/model compliance is not guaranteed by CLI tests.
+
 ## Quick start: OpenCode without global customizations
 
 Clone the repository, open its root in a standard OpenCode installation,
