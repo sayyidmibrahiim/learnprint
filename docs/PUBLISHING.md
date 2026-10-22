@@ -1,21 +1,30 @@
-# Publish the source as a new GitHub public repository
+# Learnprint publishing and branch integration
 
-The linked GitHub integration used to assemble this package can inspect/edit **existing** repositories but cannot create a new one. Do **not** assume the repo already exists.
+Updated 2026-10-23. The GitHub repository **already exists**:
+https://github.com/sayyidmibrahiim/learnprint
 
-1. In GitHub, create an **empty PUBLIC** repository named `learnprint` under the intended account (do not initialize with README/license/gitignore, since those are in the package).
-2. Option A (from source ZIP): extract `learnprint-source.zip`, then:
+## What the branches mean
 
-```sh
-cd learnprint
-git init -b main
-git add .
-git commit -m "feat: initial evidence-based portable learning skills"
-git remote add origin https://github.com/sayyidmibrahiim/learnprint.git
-git push -u origin main
-```
+- `main` is the reviewed, integrated release base. It does **not** mean every future feature is finished.
+- `feature/hardening-workspace` is the current Windows/local implementation branch and contains advanced W0-W11 work not necessarily in `origin/main`. Treat it as source of truth for unpushed local changes.
+- `fix/tutor-language-stage-contract-20261023` / draft PR #8 was authored independently against the old remote `main`. It overlaps with this local branch, so do not merge it into `main` or rebase/reset local hardening blindly. Its universal language/stage policy has been re-integrated into the canonical local `protocols/` tree with mirror tests, rather than introducing inconsistent policy copies.
 
-3. Option B (if a git bundle is supplied): `git clone -b main learnprint.git.bundle learnprint`, then add `origin` and push as above. GitHub authentication must be provided by the owner.
-4. Verify the repository's visibility says **Public**, `main` contains both skill dirs and CI runs, and no `my-learning/`, transcripts, private projects or secrets were committed.
-5. Install skills into a **separate approved project** with `python scripts/install.py --target <platform> --dest <project> --dry-run` then `--approve`. Existing files are not overwritten.
+## Controlled integration to main (runbook, NOT an executed operation)
 
-Do not push a personal profile or history unless the learner independently decides to publish it. The anonymous founder default in this repo was intentionally generalized, and raw assessment chats are excluded.
+1. Finish the applicable tasks on `feature/hardening-workspace`, rerun tests, package and staged-index publication guard. Check exact change inventory; protect all private `Courses/` state.
+2. Resolve all on-disk edits/claims and use a local Git tool with explicit path-level staging, diff review and privacy scan. Commit coherent units only with owner authorization; never `git add -A`, `git reset --hard`, or `git clean`.
+3. Fetch `origin/main`, inspect ancestry/divergence. Push the reviewed feature branch only with owner approval, then open a SINGLE integration pull request against `main`. PR #8 is CLOSED and unmerged as redundant; then leave it CLOSED as superseded, not merge duplicate changes. PR #8 was closed unmerged on 2026-10-23 after its universal policy was migrated and regression-tested on this local branch.
+4. Require PR CI, Windows tests, cross-platform Python versions, privacy guard, and real host/model UAT for any feature making behavioral claims. Distinguish engineering PASS from human learning effectiveness NOT VERIFIED.
+5. Merge via GitHub only after the diff/CI/reviews pass. Then update/recreate the next feature branch from the current `main`. Tag `v1.0.0` only when the specifically agreed release acceptance criteria are met.
+
+## Private Courses and optional public course portfolios
+
+ALL courses are *eligible for the learner to consider* as GitHub proof-of-work, regardless of subject or scope. NONE are automatically public.
+
+Use read-only `python scripts/learnprint.py course portfolio-options`. For each chosen course, create a private manifest allowlisting only owned shareable artifacts, inspect the exact `portfolio-preview`, then explicitly approve `portfolio-export`. Each export creates a separate bounded public snapshot and still performs **no Git commit or push**. Use the staged Git index privacy guard before any separately approved Git publication. Courses not selected remain private. A course with no authentic shareable artifact is eligible to prepare but not ready to claim proof-of-work.
+
+The canonical originals `Courses/.learnprint/` and `Courses/<category>/<course>/` are never pushed. Consult [ADR-0002](adr/0002-selective-course-portfolio-publication.md), [COURSE-PORTFOLIO.md](COURSE-PORTFOLIO.md), [PRIVACY.md](../rules/PRIVACY.md), and the [GitHub sensitive data/history guidance](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository). Even deleting a remote file later cannot erase copies already cloned or forked.
+
+## This document does not authorize Git changes
+
+It records the safe sequence only. A successful build is not permission to push learner work. If tooling only permits safe read/write/test actions, mark staging/merge unexecuted rather than manufacturing a clean release claim.

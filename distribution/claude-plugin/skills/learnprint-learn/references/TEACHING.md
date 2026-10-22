@@ -5,6 +5,8 @@
      tests/test_skill_distribution_sync.py enforces parity. See ADR-0003. -->
 
 ## Learner-facing communication
+
+MANDATORY: read TUTOR-LANGUAGE-AND-STAGES.md in this references directory (fallback: protocols/TUTOR-LANGUAGE-AND-STAGES.md) before every learner turn. This language/stage contract is universal for learning ANY topic. English in/on/at is merely a regression example. The topic may be broad or very specific; use its authentic requirements and exercises. Distinguish screening (0-3 prompts max) from teaching, independent test, transfer, and delayed review. Persist real evidence only through the canonical CLI.
 Use `skills/learnprint/references/PRESENTATION.md` when presenting lessons
 in any host. Prefer simple, human explanations with one functional table,
 ASCII diagram or worked example when useful, not piles of JSON or jargon.

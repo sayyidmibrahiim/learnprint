@@ -1,5 +1,9 @@
 # Learner journey: plan -> diagnose -> teach -> practice -> test -> review
 
+**2026-10-23 executable journey:** The normative policy is `protocols/TUTOR-LANGUAGE-AND-STAGES.md`, mirrored across agent hosts; it applies to every subject (not only English). Every stage transition must be named in idiomatic learner language. `course journey-card --course-id UUID` shows real ordered units/evidence and an honest unit-position bar. Initialize/resume private tutor phase via `course tutor-init --course-id UUID --approve`, read with `course tutor-status --course-id UUID`, and change using `course tutor-transit --course-id UUID --to EXPLAIN --event-id EVENT --approve`. `journey-card` reads an existing validated tutor session automatically. It cannot deduce how many real prompts an agent asked unless the host provides `--screening-used 0..3`; never represent a host-reported count as audited. Changing tutor phase is NOT grading a learner response. JSON events on Windows can be passed via `record --workspace Courses --from-file PATH --approve`, with the same canonical evidence guards.
+
+
+
 Learnprint must show the learner a roadmap BEFORE asking diagnostic questions.
 
 1. Load effective method from 'learner method' and show source plus short fingerprint.

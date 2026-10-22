@@ -7,6 +7,13 @@ ROOT = Path(__file__).resolve().parents[1]
 # ADR-0003: protocols/ is the authoritative policy source; these locations
 # must stay byte-identical to it.
 CANONICAL_POLICY_MIRRORS = {
+    "protocols/TUTOR-LANGUAGE-AND-STAGES.md": (
+        "skills/learnprint/references/TUTOR-LANGUAGE-AND-STAGES.md",
+        ".agents/skills/learnprint/references/TUTOR-LANGUAGE-AND-STAGES.md",
+        "skills/learnprint-learn/references/TUTOR-LANGUAGE-AND-STAGES.md",
+        ".agents/skills/learnprint-learn/references/TUTOR-LANGUAGE-AND-STAGES.md",
+        "distribution/claude-plugin/skills/learnprint-learn/references/TUTOR-LANGUAGE-AND-STAGES.md",
+    ),
     "protocols/TEACHING.md": (
         "skills/learnprint-learn/references/TEACHING.md",
         ".agents/skills/learnprint-learn/references/TEACHING.md",

@@ -67,6 +67,20 @@ See docs/USER-ACCEPTANCE-TEST.md.
 
 For project-specific installation: `python scripts/install.py --target opencode --dest /path/to/project` (also `codex`, `claude`, `gemini`, `kiro`, `antigravity`). Preview first with `--dry-run`. Installation never guesses your project path and refuses overwrites.
 
+For a safe end-to-end usage guide, see [Production Walkthrough](docs/PRODUCTION-WALKTHROUGH.md). The research, runtime-support decisions and outstanding release gates are in [October 23 Production Release Research](docs/research/2026-10-23-production-release-gates.md). These are engineering documents, not independent learner certificates.
+
+## One universal tutor, explicit learning stages
+
+Learnprint accepts a narrow question (DNS caching or a single music chord) or a broad goal (mathematics, language, historical research, software engineering). The same evidence gates work across domains, while exercises, prerequisites and measured outcomes match the subject. Tutor language/flow policy is defined canonically in [TUTOR-LANGUAGE-AND-STAGES.md](protocols/TUTOR-LANGUAGE-AND-STAGES.md). It requires idiomatic explanations, clearly named screening/learning/test/transfer/review stages, compact ASCII unit-position navigation, and zero invented mastery percentages.
+
+The read-only `course journey-card --course-id UUID` shows the canonical ordered roadmap. Optional `--stage SCREENING --screening-used 1 --unit-id ID` are explicitly **host-reported navigation hints**, not proof from the evidence ledger. `--session-file PATH` can instead read and verify a persisted tutor FSM phase for the same course.
+
+Every course can be proposed as a GitHub portfolio, but publication is selective and **never automatic**. Run `course portfolio-options` to list choices, then review a curated per-course `portfolio-preview`; raw `Courses/` records must not be committed. See [Course Portfolio](docs/COURSE-PORTFOLIO.md).
+
+The private deterministic tutor FSM can be started with `course tutor-init --course-id UUID --approve`, inspected with `course tutor-status --course-id UUID`, and advanced using `course tutor-transit --course-id UUID --to EXPLAIN --event-id EVENT --approve`. Transitions are authenticated to the course via locked, validated local session state; `journey-card` automatically reads the persisted phase when present. Moving phases does NOT record or grade a learner answer, and real screening prompt count remains host-reported unless explicitly provided.
+
+For Windows PowerShell, record actual observed answers with `record --workspace Courses --from-file PRIVATE-EVENT.json --approve` to avoid shell-escaping complex `--rubric` JSON. Do not put `approve` or workspace paths inside that input file. This action still requires explicit live learner consent and is never used to invent answers.
+
 ## Course workspace (no manual navigation)
 
 Open the repo root in any supported host and say `Belajar: <topic>`:
@@ -137,7 +151,7 @@ python scripts/learnprint.py init --workspace /tmp/learnprint-demo
 python scripts/learnprint.py report --workspace /tmp/learnprint-demo
 ```
 
-No nonstandard Python dependencies. Python 3.9+ recommended. MIT license. Contributions welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
+No nonstandard Python dependencies. **Production runtime: CPython 3.11–3.15 (supported branches as of 2026-10-23).** Existing Python 3.9-compatible source syntax is best-effort legacy compatibility, not a recommendation to run EOL Python. CI covers 3.11/3.12/3.13/3.14/3.15 across Windows/Linux/macOS. MIT license. Contributions welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### Plugin distribution
 

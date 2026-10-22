@@ -11,6 +11,10 @@ For first-run onboarding, use skills/learnprint/SKILL.md before teaching. Never 
 
 Read `references/TEACHING.md` and use `references/founder-default.json` **only if no valid local personal profile exists**. If a personal profile is approved in the user's local workspace, it overrides the founder default; do not modify the public template.
 
+Before EVERY learner turn, load references/TUTOR-LANGUAGE-AND-STAGES.md alongside TEACHING/JOURNEY/PRESENTATION. Its fluent-language, clear SCREENING/BELAJAR/TEST/TRANSFER/REVIEW labels and truthful unit-position roadmap apply to all subjects from a narrow fact to broad programs. Don't mistake unit progress for mastery.
+
+For a consented private course session, initialize or resume durable phase with `course tutor-init`/`course tutor-status`; use `course tutor-transit` for approved phase changes, and `course journey-card` for learner-visible unit position. Do not reinitialize an existing session, manufacture screening prompt counts, or claim phase transitions are assessments. Canonical `record` alone stores actual learner responses; use `record --from-file` to avoid Windows JSON quote loss.
+
 Execution gates:
 1. Identify a concrete task/goal and test current knowledge *per topic* (0–3 probes) instead of assuming a fixed learner level.
 2. Research material claims with real sources where tools allow; unknown/missing sources are explicitly labeled. User answers are evidence of responses, not external factual truth.

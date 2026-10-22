@@ -1,5 +1,9 @@
 # Learnprint privacy and Git policy
 
+## Universal publication eligibility, selective consent
+
+All course subjects and sizes can be *considered* for a future portfolio. The default is **eligible for learner choice**, NOT publicly visible, Git-tracked, or pushed automatically. The learner must choose each specific course, choose each shareable hands-on artifact, inspect the exact derived preview, explicitly authorize local export and independently authorize GitHub push. Courses they do not select remain private. No course or source data is automatically sent over the network.
+
 ## Canonical learner data stays private
 
 - The canonical `Courses/<category>/<course>/` folders, `Courses/.learnprint/`, learner profiles, raw answers, progress/event ledger, private method receipts, tutor notes and backups are ignored and **must not** be committed or pushed.

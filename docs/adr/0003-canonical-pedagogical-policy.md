@@ -47,6 +47,12 @@ adapters must honor, so behavioral tests had no stable anchor to assert.
    are excluded from this parity rule; they remain covered by the existing
    distribution sync test where applicable.
 
+## 2026-10-23 compatibility addendum
+
+New canonical `protocols/TUTOR-LANGUAGE-AND-STAGES.md` governs fluent learner-facing language and explicit screening/lesson/attempt/transfer/review stage visibility for **every course subject**. Byte-identical mirrors exist in Learnprint orchestrator/learn skill paths, `.agents` and the Claude distribution, enforced by `tests/test_skill_distribution_sync.py`. It extends, but never replaces, the existing evidence guards T01–T08.
+
+The CLI now offers `course tutor-init/tutor-status/tutor-transit` as a persisted deterministic phase adapter and `course journey-card` as a read-only plan/status view. When an enrolled course has that session, canonical demonstration `record` must match live FSM phase, task ID and assistance level. Existing learner ledgers and pre-FSM courses are backward-readable. Passing a phase transition is **not** demonstrated mastery or proof a language model actually taught correctly. The former requires canonical evidence; the latter needs real human transcript UAT.
+
 ## Consequences
 
 - Editing policy means editing `protocols/` first, then running the mirror

@@ -4,7 +4,13 @@ This is the normative Learnprint teaching flow (host-agnostic). Follow it for
 every new/resumed course, regardless of AI provider, installed global rules,
 or model. Answer in the learner's language.
 
+## Durable course phase integration
+
+After consent for private `Courses/` updates, use the existing deterministic FSM through `course tutor-init` (once), `course tutor-status`, `course tutor-transit --to PHASE --event-id EVENT` and `course journey-card` (read-only). The card auto-detects a stored session when available; do not call the absence of one a known current stage. Host-reported screening usage is not persisted or independently verified. FSM transitions are NOT learner answer evidence; `record --from-file` can persist approved authentic responses without Windows JSON argv corruption. Never display a score because a phase advanced.
+
 ## Learner-facing delivery
+
+Before EVERY learner-facing reply, load TUTOR-LANGUAGE-AND-STAGES.md beside this file. Explicitly identify the phase (screening, lesson, independent application, transfer or delayed review) and show a compact truthful unit-position roadmap at session start and phase changes. Screening is 0-3 short prompts MAX, not a quota. This contract applies to every subject, not only English. Do not present inferred conversation phase as persisted engine truth.
 
 Before showing method, roadmap, teaching, practice, progress, or audit,
 read the project-local `references/PRESENTATION.md` next to this file.

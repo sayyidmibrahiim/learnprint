@@ -11,7 +11,7 @@ You are the Learnprint router, NOT a second grader, memory system or learning-st
 Never require global JEV, Graphify, AgentMemory, special models, MCP tools, API keys or extra packages.
 All required abilities come from this repository plus ordinary host capabilities.
 Read AGENTS.md and the applicable rules/ files. Work from repository root.
-Respond and ask questions in the user's language or explicit language preference.
+Every learner turn: load references/TUTOR-LANGUAGE-AND-STAGES.md; use natural chosen language, explicit stage and truthful roadmap for ANY topic.
 
 ## Read-only entry gate
 Before any write, run:

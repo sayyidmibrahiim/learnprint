@@ -1,7 +1,7 @@
 # to-do.md — Learnprint Cross-Agent Execution Tracker
 
 **TRACKER SCHEMA:** v1  
-**Last updated:** 2026-10-22 (Asia/Jakarta)  
+**Last updated:** 2026-10-23 (Asia/Jakarta); current handoff appears below, older logs retained  
 **Canonical plan:** [Learn Print Deep Research and Mega Enhancement Plan.md](Learn%20Print%20Deep%20Research%20and%20Mega%20Enhancement%20Plan.md)  
 **Coding constraints:** [Code Style.md](Code%20Style.md)  
 **Repository rules:** [AGENTS.md](AGENTS.md) and [CONTEXT.md](CONTEXT.md)  
@@ -20,6 +20,69 @@
 7. Before handing off: complete section G with current phase, task, artifact paths, tests, blocked reasons and **exact next action**; ensure the tracker is saved with the implementation change. If tool cannot do Git operation, leave it explicitly BLOCKED with review-ready path list rather than inventing a commit.
 
 **Critical rule:** This tracker is NOT the program's canonical evidence ledger. Do not add fictitious learning results or change private learner state here. Public-facing assessment evidence still uses the actual CLI and append-only records, with separate learner permission.
+
+## RELEASE RELAY UPDATE — 2026-10-23 (latest, supersedes older numerical snapshots)
+
+**Final local verification addendum:** pytest 516 passed/3 skipped/385 subtests, exit 0; unittest 519 tests OK/3 skipped, exit 0; packaging PASS, index privacy guard PASS with 0 private indexed after exact 49-path public-only staging; three real course IDs validate VALID. All technical verification happened on Windows; external GitHub Actions CI/human UAT remain NOT VERIFIED.
+
+
+**Owner authorization:** explicit in this chat to analyze, fix, test, document, commit and publish code as needed. This does NOT direct publication of the learner's real `Courses/`; selective course release needs artifact-level informed selection and privacy review. Preserve all historical evidence, ticket comments and untracked original data.
+
+**Latest local engineering evidence:** Windows, `python -m pytest tests/ -q`: **516 passed, 3 skipped, 385 subtests passed**, exit 0, 288.37 s, on the working tree after live FSM evidence binding, Windows CRLF and document path protections. Focused docs test: 6 pass/1 skip; focused FSM/evidence tests: 11 pass. CI jobs for other OS/Python versions have NOT run as part of this local test.
+
+**Research updated to 2026-10-23**: official Python support schedule now includes stable 3.15.1 (2026-10-21); 3.9/3.10 EOL. `.github/workflows/verify.yml` now checks 3.11/3.12/3.13/3.14/3.15 on Windows, Linux and macOS using actions/checkout@v7, setup-python@v7, read-only permissions and checkout without persistent credentials. See `docs/research/2026-10-23-production-release-gates.md`.
+
+**P0/P1 hardening just completed:**
+- Course doc generator refuses symlink/junction directory-chain changes, linked/replaced/oversized file leaves, and altered pre-images; known Windows CRLF stubs handled while hashing exact original bytes. Atomic per-file writes and backups do not form an all-file crash-transaction; adversarial OS-level swaps not proven impossible.
+- When tutor phase is persisted, demonstration writes in `record` enforce exact ATTEMPT/TRANSFER/DELAYED_RETRIEVAL phase, caller-supplied task ID from that private FSM and matching assisted/unassisted provenance. Legacy courses lacking a tutor session remain readable and writable under existing guards. New tests prove ORIENT/mismatched-task and hint-relabel rejection.
+- Universal-language policy, portable adapters, private course docs, honest unit position, selective publication UX, and actual SQL/DNS/English private course plans from the preceding session preserved.
+- `docs/PRODUCTION-WALKTHROUGH.md` offers a truthful start-to-finish owner guide. No fabricated tutor transcripts, evidence, credentials or learner-human trials.
+
+**Open acceptance gates that MUST NOT be relabeled DONE:** real low-context and different host multilingual tutor UAT, human learner efficacy/retention, GitHub cross-platform matrix actual results, adversarial file-system race review, installed hook consent/behavior if publishing a portfolio, immutable public portfolio revision strategy, and approved integration into current `main`. Existing .scratch tickets remain open if their required acceptance still lacks proof; do not erase them for a clean-looking dashboard.
+
+**Git scope:** only explicit reviewed public paths from `show_changes` may be staged/committed, with the Git-index privacy checker rerun after staging. The real ignored `Courses/` and backups NEVER enter the public commit. No destructive cleanup, raw `git add -A`, or false release tag. Final stage/commit/remote result should be appended as a separate verified entry.
+
+---
+## CURRENT EXECUTION HANDOFF — 2026-10-23 (this entry supersedes older status prose, not history)
+
+**Owner/session:** ChatGPT via connected CodexProLatestFix; continuation of owner's explicitly requested full Learnprint hardening, universal-tutor UX and selective course portfolio work. **Workspace:** `D:\Ibrahim\Projects\learnprint`; branch `feature/hardening-workspace`. **Initial observation:** worktree clean before this run. **Current status:** reviewed local source edits and untracked additions **not committed, not pushed, not merged**. Original tracked source and private learner evidence remain protected. Agent claims from earlier dated entries should not be treated as a live lock without new heartbeat.
+
+**Product decisions (binding):**
+- Tutor supports **ANY course topic**, from narrow/specific to wide/multi-stage, in the learner's fluent preferred explanation language. English `in/on/at` is only a reproduction case. For each domain use authentic prerequisite order, example, safe hands-on, independent application/transfer, and delayed review.
+- Display explicit stage labels and a compact honest ordered syllabus. `0–3` diagnostic prompts is a **ceiling**, not three mandatory tests. ASCII progress shows unit position, NOT percentage mastered. Only the evaluator may assert evidence-gated competence; host-reported stage is not persisted proof.
+- **Every course is eligible for learner-selected portfolio curation**. NO course is automatically published. Each published course needs a separate exact-file manifest/preview/approval; canonical `Courses/` and `events.jsonl` remain private; GitHub commit/push is a separate authorization.
+
+| New ID | Scoped change and test evidence | State |
+|---|---|---|
+| TUX-01 | Canonical `protocols/TUTOR-LANGUAGE-AND-STAGES.md` plus exact mirrors in skills/.agents/distribution; integrated into AGENTS/TEACHING/JOURNEY/PRESENTATION and skill/command entrypoints. `docs/TUTOR-LANGUAGE-STAGES-UAT.md` contains multilingual, stage and seven-domain manual UAT cases. | VERIFIED policy/file wiring only; real model response UAT OPEN |
+| TUX-02 | `scripts/learnprint_stage_card.py` + read-only `course journey-card`, canonical plan/evidence status + host-reported stage OR verified persisted course FSM, 0–3 usage, clear unit-position bar; `course tutor-init/tutor-status/tutor-transit` now binds the existing validated FSM to private per-course state, with approval and idempotent replay. | VERIFIED by disposable automated tests, 3 added live CLI integration tests; actual model behavior across hosts remains OPEN |
+| EVID-CLI-01 | `record --from-file` supports UTF-8 private JSON with a rubric object, preserving real observed answers, CLI-level --approve, fail-closed disallowed fields, no shell-escaping hazard. | VERIFIED by disposable regression tests, Windows scenario |
+| PORT-SELECT-01 | Read-only `course portfolio-options` lists every course eligible for individually consented curated export; no Git stage/push. ADR-0002, PRIVACY.md, COURSE-PORTFOLIO.md and README updated. | VERIFIED CLI and source policy; real GitHub publication deliberately NOT PERFORMED |
+| COURSE-DOC-01 | `course docs-preview/docs-sync` renders bounded checksum-sealed safe derived syllabus/Mermaid/handoff from validated structured state; accepts known stubs or verified previous generation, rejects edits/links/stale digest, backups, no ledger score changes. | VERIFIED disposable tests; one symlink test SKIPPED by Windows permission |
+| COURSE-LOCAL-01 | Real user private English course retains UUID, 3 units and observed evidence; SYLLABUS/MAP/course HANDOFF/root HANDOFF synced from stubs after read-only preview and backups. | VERIFIED command success and read-only course validate |
+| COURSE-LOCAL-02 | Real SQL course: preserved original UUID, all 6 competency IDs and evidence; constructed/prerequisite-validated/adopted 6-unit structured plan via official plan-set and backup. Original user-authored SYLLABUS/MAP/HANDOFF deliberately preserved. | VERIFIED dry-run + plan-set, course validate |
+| COURSE-LOCAL-03 | Real DNS course: original UUID retained; 4 unknown competencies (no invented observations), 4 prereq-ordered units adopted with backup; stub docs refreshed after approved preview. | VERIFIED dry-run/plan-set/docs-sync/course validate |
+| GIT-01 | Local branch is advanced vs public `main` historically at 3f19d392; stale remote draft PR #8 was closed unmerged after universal local policy integration; no duplicate PR remains open. `docs/PUBLISHING.md` updated for real branch/PR integration, no new PR created in this run. | SAFE HELD: no blind merge/reset/commit/push; requires reviewed path-scoped Git integration |
+| HOST-UAT-01 | Test stock and customized OpenCode tutor on at least 3 different subject families and 2+ explanation languages; independently review transcripts for real fluency, stage and reliable learner evidence. | NOT VERIFIED; cannot claim model-behavior PASS from unit tests |
+| W0/W11-REMAINING | Cross-OS Python 3.9/3.12 CI, real security/junction race review, actual installed hook upgrade, public immutable revision model, independent reviewer/human learning-outcomes study and owner-approved main merge. | OPEN under pre-existing W0–W11 gates, NOT silently reclassified as done |
+
+**Current-turn commands and ACTUAL results:**
+- `python -m pytest tests/test_tutor_policy_contract.py tests/test_skill_distribution_sync.py -q` -> exit 0, 10 passed, 63 subtests.
+- `python -m pytest tests/test_record_from_file.py tests/test_cli.py -q` -> exit 0, 18 passed.
+- `python -m pytest tests/test_journey_card_and_portfolio_options.py -q` -> exit 0, 7 passed, 3 subtests.
+- `python -m pytest tests/test_course_docs_sync.py -q` -> exit 0, 3 passed, 1 skipped (unavailable Windows symlink privilege).
+- **`python -m pytest tests/ -q` -> exit 0, 511 PASSED, 3 SKIPPED, 385 subtests passed, 157.91 seconds** on Windows local.
+- `python scripts/check_package.py` -> exit 0, PACKAGING OK.
+- `python scripts/learnprint_publish_guard.py --repo .` -> exit 0, OK, zero private files in Git index, zero public snapshots indexed; does NOT test real publication in this repo.
+- `python scripts/learnprint.py course validate` -> exit 0, VALID (all 3 actual private courses).
+- `python scripts/learnprint.py course portfolio-options` -> exit 0, all 3 course UUIDs selectable, 0 exported.
+- Windows learner course changes happened under existing standing approval and this user-directed fix scope, through normal `scope-set`, `plan-set`, `docs-sync`; no new test grades, score events, publication, commit/push or network action.
+
+**Changed tracked public paths:** AGENTS.md; README.md; Learn Print Deep Research and Mega Enhancement Plan.md; to-do.md; docs/COURSE-PORTFOLIO.md; docs/PUBLISHING.md; docs/adr/0002-selective-course-portfolio-publication.md; rules/PRIVACY.md; scripts/learnprint.py; tests/test_skill_distribution_sync.py; protocols/TEACHING.md, JOURNEY.md, PRESENTATION.md; all respective `skills/`, `.agents/skills/`, `distribution/claude-plugin/` mirror policies; `.opencode/commands/learnprint-learn.md`. **New untracked public source:** `protocols/TUTOR-LANGUAGE-AND-STAGES.md` + five mirrors; `docs/TUTOR-LANGUAGE-STAGES-UAT.md`; `scripts/learnprint_stage_card.py`, `learnprint_course_docs.py`; `tests/test_tutor_policy_contract.py`, `test_record_from_file.py`, `test_journey_card_and_portfolio_options.py`, `test_course_docs_sync.py`, `test_course_tutor_persistence.py`. **Private ignored paths added under actual learner Courses:** two proposal JSON for DNS, one SQL plan proposal, generated course documents and backups, structured state/competency updates; DO NOT stage, publish or delete. See actual `show_changes` rather than old C1/C3 dirty baselines.
+
+**Next safe integration step:** use `show_changes` and source-level review; ensure no private contents are staged; run privacy/packaging gates; remote PR #8 was CLOSED unmerged as superseded by local advanced hardening work on 2026-10-23; stage/commit/sync only via separately reviewed Git path-specific operation after owner authorization. `main` is a stable integrated branch, NOT a promise that all future features are complete. Once in main and actually verified, start later features from fresh main. Leave real learner data in Courses/ and all historical tracker entries intact.
+
+---
 
 ## B. Current execution dashboard
 

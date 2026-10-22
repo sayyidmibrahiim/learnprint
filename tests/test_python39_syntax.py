@@ -1,4 +1,6 @@
-"""Static Python 3.9 grammar gate for first-party Learnprint Python sources.
+"""Legacy Python 3.9 grammar compatibility gate for first-party Python sources.
+
+Python 3.9 is EOL as of 2025-10-31 and is NOT a supported production runtime.
 
 This test runs on newer Python as a fast portability smoke check. Passing
 does NOT prove Python 3.9 runtime, stdlib API, or OS compatibility.

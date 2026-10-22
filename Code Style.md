@@ -13,7 +13,7 @@
 1. Locate the active task ID in to-do.md and confirm the scope, owner, baseline branch/HEAD and dirty working tree. Do not edit unless you can explain why the path exists and who owns it.
 2. Read the relevant source code + its callers/tests, AGENTS, rules, ADRs and public CLI contract **before** writing. Use tools to inspect actual code; don't infer methods from names.
 3. Plan the smallest viable diff. State observable behavior, invariants, success criteria, main failure modes and migration needs.
-4. Keep **Python 3.9+ standard-library-only** unless the owner explicitly approves a new dependency. No hidden network, global install, platform-specific native service or API key requirement.
+4. Keep **Python standard-library-only; supported deployment CPython 3.11–3.15** as of 2026-10-23. Preserve existing 3.9 grammar compatibility when practical, but do not recommend EOL runtimes for production. New dependencies require explicit architectural approval. No hidden network, global install, platform-specific native service or API key requirement.
 5. Preserve **append-only ledger, immutable UUIDs, canonical evaluator, explicit user consent, original private Courses/ and no fabricated learner evidence**.
 6. Make implementation deterministic where possible, fail closed on ambiguous/corrupt input, and write durable records atomically.
 7. For every behavior change, add positive + negative + boundary tests before claiming DONE. Verify relevant full suite and packaging as required.
@@ -43,7 +43,7 @@
 
 Read **docs/agents/issue-tracker.md** for per-ticket files and use the established status convention. The proposed V2 modules are only suggestions until approved: scripts/learnprint_tutor.py, scripts/learnprint_scheduler.py and their versioned schemas; don't invent parallel projects or change file locations without reason.
 
-## 3. Python coding rules (Python 3.9+)
+## 3. Python coding rules (supported deployment 3.11–3.15; optional 3.9 grammar compatibility)
 
 **Clarity beats cleverness.** Most bugs in a cross-model codebase arise from hidden side effects, guessed invariants, and convenient magic abstractions.
 
@@ -51,7 +51,7 @@ Read **docs/agents/issue-tracker.md** for per-ticket files and use the establish
 - Export public functions with predictable, narrow contracts; document inputs, return shape, exceptions, data mutations and whether a CLI subcommand is read-only.
 - Prefer a small pure function for parsing/validation/policy decisions before anything that reads/writes paths, invokes a model or calls external processes.
 - Favor immutable data passed explicitly as arguments. Avoid global mutable state or hidden dependence on current working directory/timezone, environment, Git status or host-specific model memory.
-- Use `pathlib.Path`, `json`, `datetime`, `hashlib`, `tempfile`, `os`, `subprocess`, `unittest` and other stdlib tools as appropriate. Test on Python 3.9; avoid syntax/features introduced in 3.10+ unless a documented supported-version change has been approved.
+- Use `pathlib.Path`, `json`, `datetime`, `hashlib`, `tempfile`, `os`, `subprocess`, `unittest` and other stdlib tools as appropriate. Test supported Python 3.11, 3.12, 3.13, 3.14 and 3.15 on GitHub Actions; the static 3.9 grammar check is a backward-compatibility courtesy, NOT 3.9 security or runtime support. Avoid new syntax unnecessarily unless supported-version changes are reviewed.
 - Explicitly check file encodings, maximum sizes, valid directory boundaries and serialized schemas. Avoid silent fallbacks that turn INVALID into empty/default valid.
 - Use type hints for signatures and unfamiliar structures; make structures simple enough for tests to reconstruct. Prefer explicit small named objects over nested any-typed dicts when a domain concept stabilizes.
 - Do not add third-party dependencies, package managers, cloud persistence, ML libraries, async frameworks or native binaries just to solve a task that stdlib can handle.

@@ -2,21 +2,38 @@ name: Verify
 on:
   push:
   pull_request:
+
+# Production-supported CPython releases as of 2026-10-23.
+# Python 3.9 and 3.10 are EOL; legacy syntax support stays best-effort only.
+permissions:
+  contents: read
+
 jobs:
   test:
+    name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ['3.9', '3.12']
+        python-version: ['3.11', '3.12', '3.13', '3.14', '3.15']
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
-      - run: python -m unittest discover -s tests
-      - run: python scripts/learnprint.py validate --profile profiles/founder-default.json
-      - run: python scripts/learnprint.py validate --profile templates/learner-profile-starter.json --topic templates/topic-state.json
-      - run: python scripts/check_package.py
-      - run: python scripts/learnprint_publish_guard.py --repo .
+      - name: Python and platform
+        run: python --version
+      - name: Unit and integration regression suite
+        run: python -m unittest discover -s tests
+      - name: Founder profile validation
+        run: python scripts/learnprint.py validate --profile profiles/founder-default.json
+      - name: Starter template validation
+        run: python scripts/learnprint.py validate --profile templates/learner-profile-starter.json --topic templates/topic-state.json
+      - name: Distribution contract
+        run: python scripts/check_package.py
+      - name: Staged Git-index privacy guard
+        run: python scripts/learnprint_publish_guard.py --repo .

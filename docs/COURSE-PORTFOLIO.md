@@ -2,6 +2,16 @@
 
 Status: **implementation candidate**, locally tested; live learner UAT and cross-platform CI not yet verified. Design: [ADR-0002](adr/0002-selective-course-portfolio-publication.md).
 
+## Select per course (default: selectable, never auto-public)
+
+Every course, in **any domain**, can be considered for GitHub portfolio publication. This does NOT automatically make it public. Each learner chooses the courses and individual artifacts to publish, or keeps any course private. Listing choices is read-only:
+
+```sh
+python scripts/learnprint.py course portfolio-options
+```
+
+A course with no shareable hands-on evidence is eligible to prepare but **not ready for an evidence portfolio** until genuine proof-of-work is available and reviewed. Only an explicit `portfolio-preview` plus matching `portfolio-export --approve` creates a curated local snapshot; Git commit/push requires separate owner authorization. The CLI never publishes to GitHub by itself.
+
 ## What Learnprint publishes
 
 The real course stays under `Courses/<category>/<course>/`, with private raw evidence in `Courses/.learnprint/`. This canonical state is always ignored by Git. A separate, *derived* and human-reviewed snapshot can be exported to `Courses/public/<course-uuid>/`, where Git can track approved proof-of-work.

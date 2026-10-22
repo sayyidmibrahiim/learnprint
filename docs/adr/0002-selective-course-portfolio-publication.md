@@ -6,6 +6,10 @@ Related: ADR-0001 (disposable learner UAT remains binding).
 
 ## Owner decision
 
+**Eligibility and publication are different:** EVERY course is eligible to be proposed as a learner-owned GitHub portfolio, whether the topic is broad, narrow, technical, academic, language, or practical. The learner selects exactly WHICH courses and WHICH individual proof-of-work artifacts may be included. No course is automatically exported or pushed; all original course/evidence data remains private. A course without a safe reviewed artifact is eligible for curation but not yet publish-ready. This is the owner-selected **portfolio by default as an option, privacy by default as an action** model. The CLI lists choices read-only via `course portfolio-options` and requires distinct preview/export approval per course. A user may keep any course private without writing to Git.
+
+## Owner decision
+
 `Courses/` is a learner-owned learning workspace **and** a potential GitHub portfolio, not disposable application state. Courses can showcase lessons, source code, hands-on projects and honestly labeled evidence; users may keep selected courses private. Keep existing real course history in place, with immutable IDs and no unauthorized cleanup.
 
 User consent to learn is not consent to publish. No automatic GitHub network operations.
