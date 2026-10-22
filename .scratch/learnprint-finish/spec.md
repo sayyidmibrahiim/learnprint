@@ -18,10 +18,10 @@ workspace, branch pushed and a PR opened against `main`. No engine changes.
 | D2 | Meta-test fix = subprocess guard (not `tests/__init__.py`, not deletion) |
 | D3 | Pending docs (AGENTS.md +15, CONTEXT.md, docs/agents/*) committed as-is |
 | D4 | Completed `plan/learnprint-hardening-workspace.md` deleted (repo rule) |
-| D5 | UAT runs 100% disposable via `--courses-root <tempdir>`; repo source tree never gets a `Courses/` dir |
-| D6 | Learner during UAT = the real owner (real profile assessment); all learner data deleted after UAT, profile included |
+| D5 | UAT runs 100% disposable via `--courses-root <tempdir>`; existing real `Courses/` is preserved per ADR-0002 |
+| D6 | Learner during UAT = the real owner (real assessment in disposable root); only temporary UAT learner data and its temporary profile deleted after UAT; existing real Courses/ preserved |
 | D7 | Defects found during UAT → new tickets, never inline fixes |
-| D8 | Pre-commit privacy hook installed (`install.py --hooks --approve`) |
+| D8 | Pre-commit privacy hook installed (`python scripts/install.py --target opencode --self --hooks --approve`) |
 | D9 | After green: fetch, push branch, open PR to `main` |
 
 ## Constraints
@@ -75,7 +75,7 @@ See `issues/` — one file per ticket, worked blockers-first. Summary:
       `Courses/` (verify with a throwaway file, then clean up)
 - [ ] `plan/` contains no completed plan files
 - [ ] UAT scenarios 1–9 passed against a temp `--courses-root`; temp
-      workspace deleted afterwards; no `Courses/` at repo root
+      workspace deleted afterwards; real `Courses/` verified unchanged
 - [ ] Any UAT defect filed as a new ticket under `.scratch/` (not fixed
       inline); open defects listed in the PR description
 - [ ] PR from `feature/hardening-workspace` → `main` exists on origin
@@ -85,5 +85,5 @@ See `issues/` — one file per ticket, worked blockers-first. Summary:
 - Cross-host live verification (Requirement R) — remains a documented manual
   checklist; no compatibility claims beyond what was already claimed.
 - Engine changes of any kind.
-- Real (non-disposable) learner workspace in this repo — reopening ADR-0001
-  would be required.
+- Mutating the real learner workspace or enabling public course exports;
+  these are tracked by ADR-0002 and a separate course-portfolio workstream.

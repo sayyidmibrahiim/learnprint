@@ -1,6 +1,6 @@
 # 08 — Docs quote a non-runnable hook install command
 
-Status: ready-for-human
+Status: resolved
 Blocked by: none (non-blocking; hook itself is installed and verified)
 Found during: ticket 03 (2026-10-17)
 
@@ -45,7 +45,7 @@ scripts/install.py:156-157.)
 
 ## Acceptance
 
-- [ ] Owner picked an option; docs and/or CLI updated accordingly in a
+- [x] Owner picked an option; docs and/or CLI updated accordingly in
       follow-up workstream (not inline in this plan)
 
 ## Commit
@@ -57,3 +57,8 @@ Folded into the tracker evidence commit
 
 - 2026-10-17 builder: filed from ticket 03; no inline fix applied (D7
   discipline; docs/ and scripts/ untouched by this plan).
+
+- 2026-10-19: Selected option 1 (documentation-only correction). Updated
+  rules/PRIVACY.md, docs/adr/0001-disposable-uat-workspace.md and the
+  active finish spec to the tested CLI invocation; historical ticket text
+  remains as evidence. No installer API change was made.

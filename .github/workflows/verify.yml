@@ -19,3 +19,4 @@ jobs:
       - run: python scripts/learnprint.py validate --profile profiles/founder-default.json
       - run: python scripts/learnprint.py validate --profile templates/learner-profile-starter.json --topic templates/topic-state.json
       - run: python scripts/check_package.py
+      - run: python scripts/learnprint_publish_guard.py --repo .

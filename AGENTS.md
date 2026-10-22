@@ -2,6 +2,16 @@
 
 This is Learnprint: a portable, evidence-gated adaptive learning workspace.
 
+## Mandatory cross-agent engineering bootstrap
+
+Before any project implementation, bug fix, refactor, review, release, Git cleanup or agent/harness handoff, read **all three root files**:
+
+1. `to-do.md` — live task tracker, ownership, known dirty-file provenance, verification log and next action.
+2. `Learn Print Deep Research and Mega Enhancement Plan.md` — research basis, architecture, phased plan, sources and release gates.
+3. `Code Style.md` — coding, evidence, privacy, tests, Git and small-model execution rules.
+
+Also read `CONTEXT.md`, applicable `docs/adr/`, `rules/` and the relevant `.scratch/<feature>/spec.md`/issue files. Reconcile **actual** Git status against `to-do.md`, preserve unrelated edits and unknown untracked paths, and record all touched paths, actual tests, blockers and handoff. Neither tracker state nor a CLI `--approve` flag replaces user permission. Never use destructive reset/clean, bulk staging or implicit commit/push/publication.
+
 ## Invariants
 1. Do not upload personal learning data to the public repository.
 2. Never claim fixed learning styles, clinical diagnoses, or permanent mastery.

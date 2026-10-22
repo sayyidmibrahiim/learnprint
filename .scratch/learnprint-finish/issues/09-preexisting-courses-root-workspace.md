@@ -1,8 +1,7 @@
 # 09 — Pre-existing Courses/ learner workspace at repo root (owner decision)
 
-Status: ready-for-human
-Blocked by: none — but ticket 06's final check ("Test-Path Courses → False")
-cannot pass while this decision is open
+Status: resolved
+Blocked by: none — owner chose KEEP for existing Courses/; see ADR-0002
 Found during: ticket 03 probe (2026-10-17)
 
 ## Finding
@@ -49,9 +48,9 @@ option 1 is acceptable only with explicit owner approval.
 
 ## Acceptance
 
-- [ ] Owner picked an option
-- [ ] Ticket 06's final check + D5/ADR wording reconciled with the choice
-- [ ] Any delete/relocate executed only with explicit owner approval
+- [x] Owner picked an option
+- [x] Ticket 06's final check + D5/ADR wording reconciled with the choice
+- [x] No delete/relocate executed (KEEP); existing data untouched
 
 ## Commit
 
@@ -63,3 +62,8 @@ Folded into the tracker evidence commit
 - 2026-10-17 builder: filed from ticket 03; data left completely intact.
 - PR-blocking classification (for ticket 07's description): NON-blocking for
   the PR itself, but MUST be resolved before/at ticket 06's final check.
+- 2026-10-19: Owner clarified that Courses/ is intended as a selectively
+  publishable portfolio of learning evidence and hands-on projects. Decision:
+  KEEP the existing real Courses/ at the repo root. Never delete/relocate it
+  for disposable UAT. See ADR-0002. Public publishing is a separate gated
+  feature and not authorization to stage the existing private contents.

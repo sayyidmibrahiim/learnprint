@@ -1,12 +1,19 @@
-# Private learner data. Never publish.
+# Private learner data and publication controls.
 .learnprint/
 my-learning/
 learner-data/
 local-learning/
 *.private.json
-# Courses/ workspace: entire private learning tree (plan Stage 5.4)
-Courses/
-# Personal skill artifacts if installed to repo-root discovery paths
+# Keep source courses and their evidence private. Only approved derived
+# snapshots under Courses/public/<uuid>/ may be tracked, and must pass
+# the Git index guard before committing.
+/Courses/*
+!/Courses/public/
+/Courses/public/*
+!/Courses/public/*/
+# To keep a public snapshot private, add:
+# /Courses/public/<course-uuid>/
+# Already-tracked files need untracking and may persist in Git history.
 .agents/skills/learnprint-personal/
 .claude/skills/learnprint-personal/
 .kiro/skills/learnprint-personal/

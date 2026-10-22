@@ -117,6 +117,7 @@ Every session starts by reading `manifest.json` and `learner/profile.json`, **on
 - [`skills/learnprint-learn/`](skills/learnprint-learn/) — personalized teaching + mind map, syllabus, tests, spaced review.
 - [`prompts/`](prompts/) — portable full-text fallback for clients without native skills.
 - [`profiles/founder-default.json`](profiles/founder-default.json) — anonymized default; auto-overridden *locally only* after evidence-based assessment.
+- [`docs/COURSE-PORTFOLIO.md`](docs/COURSE-PORTFOLIO.md) — experimental, opt-in public portfolio preview/export. Core learner records stay private; direct GitHub publication is not implemented.
 - [`protocols/`](protocols/) — assessment/evaluation/research/teaching/review contracts.
 - [`schemas/`](schemas/) — JSON schemas defining profile/session/evidence interfaces.
 - [`scripts/`](scripts/) — stdlib CLI for initialization, validation, status reporting, and skill generation.
