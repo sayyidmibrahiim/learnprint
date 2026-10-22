@@ -44,7 +44,7 @@ def validate_profile(p):
     for k in ("schema_version", "profile_id", "assessment_status", "public_template", "evidence_quality", "observed_claims", "evidence", "instruction_defaults"):
         if k not in p: errs.append("missing " + k)
     if errs: return errs
-    if p["schema_version"] != "1.0": errs.append("unsupported schema_version")
+    if p["schema_version"] not in {"1.0", "2.0"}: errs.append("unsupported schema_version")
     if p["assessment_status"] not in ASSESSMENT: errs.append("invalid assessment_status")
     if p["evidence_quality"] not in {"limited", "moderate", "strong"}: errs.append("invalid evidence_quality")
     if not isinstance(p["public_template"], bool): errs.append("public_template must be boolean")
@@ -77,6 +77,19 @@ def validate_profile(p):
             for ref in c.get("evidence_ids", []):
                 matched = next((e for e in p["evidence"] if e.get("id") == ref), {})
                 if matched.get("origin") == "self_report": errs.append(f"observed claim {c.get('id')} backed by self-report")
+    if p["schema_version"] == "2.0" and "constraints" in p:
+        cons = p["constraints"]
+        if not isinstance(cons, list):
+            errs.append("constraints must be an array")
+        else:
+            for k in cons:
+                if not isinstance(k, dict): errs.append("constraint entry not object"); continue
+                if not isinstance(k.get("constraint"), str) or not k["constraint"].strip():
+                    errs.append("constraint missing statement")
+                if k.get("category") not in {"reported", "observed", "inferred"}:
+                    errs.append("constraint category must be reported/observed/inferred")
+                if not k.get("evidence_ids") or not isinstance(k["evidence_ids"], list):
+                    errs.append("constraint missing evidence ids")
     if p["assessment_status"] == "assessed" and not p["observed_claims"]:
         errs.append("assessed profile requires evidence-linked claims")
     if p["public_template"] and p["assessment_status"] == "assessed":
@@ -2066,6 +2079,58 @@ def cmd_course_lesson_log(a):
     return 0
 
 
+def _portfolio_prepare(args):
+    """Portfolio output is a curated snapshot, not canonical private learner state."""
+    import learnprint_portfolio
+    try:
+        if str(uuid.UUID(args.course_id)) != args.course_id:
+            raise ValueError("course_id must be canonical UUID")
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise ValueError("portfolio requires canonical course UUID") from exc
+    root = _courses_root(args)
+    course, state_path, _ = _registered_course(root, args.course_id)
+    rel = course.get("rel_path")
+    if (not isinstance(rel, str) or not rel or "\\" in rel or ":" in rel or
+            rel.startswith("/") or any(not part or part.startswith(".")
+            for part in rel.split("/"))):
+        raise ValueError("invalid portfolio source path")
+    if root.absolute() not in state_path.parent.absolute().parents:
+        raise ValueError("portfolio source is outside the private workspace")
+    state = load(state_path)
+    _validated_course_scope(state, course["course_id"], state_path)
+    return root, state_path.parent, learnprint_portfolio
+
+
+def cmd_course_portfolio_preview(args):
+    _root, course_dir, portfolio = _portfolio_prepare(args)
+    preview, _ = portfolio.prepare(course_dir, args.course_id, args.manifest)
+    print(json.dumps(preview, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_course_portfolio_export(args):
+    root, course_dir, portfolio = _portfolio_prepare(args)
+    target = Path(args.output_dir).absolute()
+    private_root = root.absolute()
+    approved_public = private_root / "public" / args.course_id
+    if target == private_root or (private_root in target.parents and
+                                  target != approved_public):
+        raise ValueError("export output must be outside private Courses/ or its approved public UUID path")
+    if target == approved_public and not target.parent.exists():
+        if not args.approve:
+            raise ValueError("explicit --approve required for public directory creation")
+        preview, _ = portfolio.prepare(course_dir, args.course_id, args.manifest)
+        if not preview.get("publishable") or preview["preview_digest"] != args.preview_digest:
+            raise ValueError("publication preview mismatch or private course")
+        portfolio._existing_plain_dir(private_root)
+        target.parent.mkdir(exist_ok=False)
+    # The standing learning approval never grants publication permission.
+    result = portfolio.export(course_dir, args.course_id, args.manifest,
+                              target, args.preview_digest, args.approve)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
 def cmd_course_plan(a):
     """Read-only: show what will be learned before any diagnostic or test."""
     root = _courses_root(a)
@@ -3014,6 +3079,14 @@ def main():
     ov=cs.add_parser("overview");ov.add_argument("--courses-root");ov.set_defaults(func=cmd_course_overview)
     journey=cs.add_parser("plan");journey.add_argument("--course-id",required=True)
     journey.add_argument("--courses-root");journey.set_defaults(func=cmd_course_plan)
+    pp=cs.add_parser("portfolio-preview")
+    pp.add_argument("--course-id",required=True);pp.add_argument("--manifest",required=True)
+    pp.add_argument("--courses-root");pp.set_defaults(func=cmd_course_portfolio_preview)
+    pe=cs.add_parser("portfolio-export")
+    pe.add_argument("--course-id",required=True);pe.add_argument("--manifest",required=True)
+    pe.add_argument("--output-dir",required=True);pe.add_argument("--preview-digest",required=True)
+    pe.add_argument("--approve",action="store_true");pe.add_argument("--courses-root")
+    pe.set_defaults(func=cmd_course_portfolio_export)
     session=cs.add_parser("session-start");session.add_argument("--course-id",required=True)
     session.add_argument("--courses-root");session.add_argument("--approve",action="store_true")
     session.set_defaults(func=cmd_course_session_start)
