@@ -4,6 +4,10 @@ This is the normative Learnprint teaching flow (host-agnostic). Follow it for
 every new/resumed course, regardless of AI provider, installed global rules,
 or model. Answer in the learner's language.
 
+## Tutor language and mode preflight (mandatory)
+
+Before this journey, load `TUTOR-LANGUAGE-AND-STAGES.md` from this same references directory; follow its multilingual, natural writing, separate graded/ungraded stages and learner-visible roadmap rules. In EVERY session state the current mode and, where asked or transitioning stages, the screening count (0-3 prompts used), current unit among all units, and honest evidence status. Mode changes must be announced explicitly. The stage may be inferred from conversation and must not be passed off as a persisted CLI state. If teaching or testing has started, do not later call it screening. Screening's three prompts are an upper bound, not a quota; a prompt with multiple subitems must show item count and should be kept short. Personal method assessment is not the same as screening.
+
 ## Learner-facing delivery
 
 Before showing method, roadmap, teaching, practice, progress, or audit,
