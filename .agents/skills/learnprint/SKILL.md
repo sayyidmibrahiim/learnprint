@@ -57,8 +57,9 @@ Fingerprint is a deterministic hash of instructional settings + protocol, NOT id
 scientific proof of an optimal method, or proof that assessment actually happened.
 
 ## Non-optional learning journey
-Before the first diagnostic or lesson, load skills/learnprint/references/JOURNEY.md
-(or local references/JOURNEY.md). Run learner method, report actual settings
+Before each learner reply, load references/JOURNEY.md, PRESENTATION.md and
+TUTOR-LANGUAGE-AND-STAGES.md. Label screening/lesson/test/review; maintain
+idiomatic language and honest unit-position progress. Run learner method, report actual settings
 source/fingerprint, then course plan and SHOW the learner what they will learn,
 why, prerequisite order, hands-on tasks and measurable success checks.
 When confused, pause testing, inspect and if necessary propose syllabus
