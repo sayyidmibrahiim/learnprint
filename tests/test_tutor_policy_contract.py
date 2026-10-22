@@ -65,6 +65,9 @@ class TutorPolicyContractTests(unittest.TestCase):
         uat = (ROOT / UAT).read_text(encoding="utf-8")
         for scenario in ("LANG-01", "LANG-04", "STAGE-05", "EVID-01", "PORT-01"):
             self.assertIn(scenario, uat)
+        for subject in ("DOMAIN-01", "DOMAIN-02", "DOMAIN-03", "DOMAIN-04", "DOMAIN-05", "DOMAIN-06", "DOMAIN-07"):
+            self.assertIn(subject, uat)
+        self.assertIn("subject-agnostic", (ROOT / POLICY).read_text(encoding="utf-8"))
         self.assertIn("human reviewer", uat)
         self.assertIn("not", uat.lower())
 
