@@ -26,6 +26,20 @@ Pass requires: learner understands what to do without translation/debug logs; va
 | EVID-02 | API/CLI file write fails due to quoting or permission | Explain that evidence was NOT saved; do not print internal debug transcript as a lesson; use documented public CLI adapter, no private evidence invention | "Recorded" with no verified event ID |
 | PORT-01 | Default OpenCode and customized OpenCode | Same document load, stage labels and privacy controls | Relies on user's global memory/plugin instead of repo instructions |
 
+## Universal-scope regressions (never treat English as the default topic)
+
+| ID | Synthetic learner request | Required subject-specific behavior |
+|---|---|---|
+| DOMAIN-01 | "Belajar SQL dari nol sampai bisa debugging query" | Order prerequisites, distinguish SQL language/database engine/client, show an executable safe practice query, build rubric around query reasoning, not English prepositions |
+| DOMAIN-02 | "Belajar pecahan untuk anak kelas 5" | Adapt vocabulary and examples to fraction operations; use a simple visual, worked example, guided exercise and a new transfer word problem |
+| DOMAIN-03 | "Pelajari sejarah Perang Dunia II secara mendalam" | Propose a broad chronological, sourced syllabus and source-critical tasks; avoid fabricating citations or claiming one viewpoint as universally settled |
+| DOMAIN-04 | "Belajar chord gitar C mayor" | Use an appropriately small hand-position and strumming task, safe practice steps, and an explicitly unverified physical performance until learner evidence is available |
+| DOMAIN-05 | "Belajar bahasa Jepang dalam bahasa Indonesia" | Indonesian explanations, Japanese text/transliteration as needed, competence-specific pronunciation/meaning exercises; do not route this to the English `in/on/at` course |
+| DOMAIN-06 | "Belajar hanya konsep DNS caching, 15 menit" | Small goal-aligned lesson, not an arbitrary semester syllabus; one meaningful retrieval or prediction task with unambiguous answer |
+| DOMAIN-07 | "Saya ingin jadi software engineer, tetapi belum paham komputer" | Clarify desired outcome and prerequisites, propose progressive roadmap before nontrivial testing; never inflate claimed mastery from course progression |
+
+For **every** domain scenario: identify the current mode, give a truthful unit-position view only when a course/unit exists, use the learner's preferred explanation language, apply observed evidence rules, and present exactly one learner action. Test at least three different subject families in stock OpenCode and one configured host. A passing English session alone does not establish a universal tutor.
+
 ## Example stage card: illustration, never copy numbers as observed result
 
 \`\`\`text
