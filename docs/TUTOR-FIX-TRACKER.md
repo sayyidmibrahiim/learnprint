@@ -21,6 +21,10 @@ This tracker describes the public branch work, not the learner's private local C
 | TUX-11 | Confirm personal assessment offer shown only once and default choice persists | OPEN, HOST-UAT | Existing journey/CLI rule; user shared \`assessment_offer=deferred\`, which alone cannot prove the offer was verbally presented originally |
 | TUX-12 | Separate diagnostic/practice/test/transfer/review status in persistent rendering | OPEN | Need actual per-turn host evidence; \`course plan\` and ledger are canonical, no agent-invented counts or learned percent |
 
+## Scope clarification (2026-10-23)
+
+The `in/on/at` learner transcript motivated this change but Learnprint is a **universal tutor**. Added domain-neutral instructions to `TUTOR-LANGUAGE-AND-STAGES.md` and seven multidisciplinary UAT cases (DOMAIN-01 through DOMAIN-07) covering SQL, fractions, world history, guitar, Japanese, DNS, and broad software engineering. Policy drafted on the PR branch; observed host adherence is still NOT VERIFIED. The actual W0/local master tracker has NOT been reconciled while CodexPro is unreachable.
+
 ## Reconciliation rule
 
 Before closing a task:
