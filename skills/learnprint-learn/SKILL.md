@@ -11,6 +11,8 @@ For first-run onboarding, use skills/learnprint/SKILL.md before teaching. Never 
 
 Read `references/TEACHING.md` and use `references/founder-default.json` **only if no valid local personal profile exists**. If a personal profile is approved in the user's local workspace, it overrides the founder default; do not modify the public template.
 
+Before any learner response, load `skills/learnprint/references/TUTOR-LANGUAGE-AND-STAGES.md` and the existing PRESENTATION/JOURNEY guidance (use packaged relative paths when the host differs). Label the actual mode every time it changes; screening is at most three short, unscored prompts, not a quota. Show the complete unit list and current position when resuming, distinguish unit-position ASCII bars from real evidence-based mastery, and never switch into broken mixed-language exercises.
+
 Execution gates:
 1. Identify a concrete task/goal and test current knowledge *per topic* (0–3 probes) instead of assuming a fixed learner level.
 2. Research material claims with real sources where tools allow; unknown/missing sources are explicitly labeled. User answers are evidence of responses, not external factual truth.
