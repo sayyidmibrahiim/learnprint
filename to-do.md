@@ -17,7 +17,15 @@
 - **Local Windows evidence on head `cecda70`:** `python -m unittest discover -s tests` exit 0, 519 tests, OK (3 skipped); `python -m pytest tests/ -q` exit 0, 516 passed, 3 skipped, 385 subtests passed.
 - `python scripts/check_package.py` exit 0 PACKAGING OK. `python scripts/learnprint_publish_guard.py --repo .` exit 0 with zero indexed paths. `profiles/founder-default.json` and `templates/learner-profile-starter.json` VALID. `learnprint.py --help` exit 0.
 - **Hook policy is final and fail-closed:** the installer never replaces an existing `.git/hooks/pre-commit`, including a legacy Learnprint hook. Manual reviewed migration only. See `scripts/install.py` and `tests/test_publish_hook_install.py`.
-- **Still open, human-only, never to be relabeled DONE:** real multilingual tutor UAT on a live host, independent human learning efficacy/retention, independent adversarial filesystem security review. Merge into `main` is a separate pending decision.
+- **Still open, human-only or independent-review, never to be relabeled DONE without evidence:** real multilingual tutor UAT on a live host, independent learner efficacy/retention, and independent adversarial filesystem security review. **The Git merge is already complete**, as confirmed in the first two entries above; there is no pending PR #9 merge decision.
+
+### DOC-STATUS-20261023 — reconciled current release truth (scope: public docs + regression test)
+
+**Owner / harness:** ChatGPT via CodexProLatestFix. **Branch:** `docs/reconcile-release-status-20261023` from clean `main` at `e8340e8`. **Reason:** live owner was receiving contradictory branch/release information even though PR #9 had been merged. **Source of fact:** the actual merge and final-main GitHub Actions run `39909186179` with 15/15 successful jobs (independently checked read-only), no learner data.
+
+**Changed scope:** `docs/COURSE-PORTFOLIO.md`, `docs/adr/0002-selective-course-portfolio-publication.md`, `docs/PUBLISHING.md`, `docs/RELEASE-NOTES.md`, `docs/research/2026-10-23-production-release-gates.md`, `to-do.md`, and new `tests/test_release_status_docs.py`. Reconciled the current Python matrix 3.11–3.15 x 3 platforms, PR #9 merged vs old pending wording, PR #8 closed without merge, and the **final** no-auto-upgrade existing-hook security decision. Older failed CI runs remain as historical lessons, explicitly labeled superseded.
+
+**Verification:** `python -m pytest tests/test_release_status_docs.py tests/test_skill_distribution_sync.py -q`: exit 0, 10 passed, 44 subtests. `python scripts/check_package.py`: exit 0 PACKAGING OK. `python scripts/learnprint_publish_guard.py --repo .`: exit 0, 0 private indexed paths. The new PR's 15-job cross-platform CI is a separate gate and must be recorded when observed. **Out of scope:** no private `Courses/` mutations, no Git hook install, no tutor quality or learner human trials, no production-readiness tag. **Current three human gates remain OPEN.**
 
 ## A. Takeover protocol (mandatory at the beginning of EVERY session)
 

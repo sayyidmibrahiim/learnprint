@@ -1,5 +1,5 @@
 # Learnprint production and publish readiness research
-Date: 2026-10-23 (Asia/Jakarta) | Branch: feature/hardening-workspace
+Date: 2026-10-23 (Asia/Jakarta) | Researched on `feature/hardening-workspace`; implementation merged to `main` via PR #9. Latest final-main CI: `39909186179` (15/15 successful). This is historical research, not a declaration that human UAT, independent learner outcome measurement, or independent adversarial security review has passed.
 
 ## What was independently checked today
 1. **Runtime security lifecycle.** Python.org reports Python 3.9 end-of-life on **2025-10-31** and Python 3.10 on **2026-10-01**. The active supported CPython line today runs 3.11–3.15. Python **3.15.0** was released 2026-10-09; **3.15.1** arrived 2026-10-21 with security fixes. Decision: no EOL Python in production runtime documentation or CI. Retain best-effort source grammar backwards compatibility only. CI matrix now runs 3.11, 3.12, 3.13, 3.14, 3.15 on Windows, Ubuntu, macOS. **Local tests on Windows 3.14 do not prove those 15 jobs passed remotely.**
@@ -28,7 +28,7 @@ The first PR #9 remote 15-job GitHub Actions matrix revealed **Ubuntu 3.11–3.1
 
 - macOS's OS-maintained `/var -> /private/var` alias made legitimate disposable fixtures fail portfolio directory-chain symlink validation before privacy assertions. `scripts/learnprint_portfolio.py` now normalizes **only that exact trusted macOS OS alias** for directory-chain verification; it still rejects arbitrary symlinks and linked paths below it.
 - Windows GitHub runner temporary root used a path alias inconsistent with `Path.absolute()` vs `Path.resolve()` in three junction fixture containment assertions. The regression fixture now canonicalizes **the existing parent only**, never resolves the malicious junction leaf.
-- Windows legacy hook upgrade link-swap race test showed a false acceptance under some NTFS/stat implementations. `scripts/install.py` now checks original/current hook identity and link count through Win32 `GetFileInformationByHandle` (read-only), rather than relying only on potentially incomplete CRT stat inode/link metadata.
+- Windows legacy hook upgrade link-swap race test revealed false acceptance. **Final resolution supersedes earlier proposed identity checks:** `scripts/install.py` refuses all existing hooks and installs only by exclusive create into a previously empty hook path. No automatic legacy hook replacement.
 - Focused local regression tests: 47 passed, 3 skipped; fresh full Windows-local pytest **516 passed, 3 skipped, 385 subtests passed**. Cross-platform jobs must rerun on the new commit; no claiming success until observed.
 
 ### CI follow-up remediation, 2026-10-23
@@ -37,7 +37,7 @@ CI follow-up run `39888014467` reproduced Windows 3.11 hardlink-swap failure eve
 
 ### CI cross-platform follow-up: fixture alias and pinned hook (2026-10-23)
 
-Follow-up CI run `39888572396` demonstrated two distinct regressions: macOS synthetic reparse/link/path-swap fixtures compared the OS `/var` alias against normalized `/private/var` and missed the intended fixture path; Windows linked legacy hook upgrade still passed a rename/hardlink swap under runner conditions. The macOS test fixture now compares the same narrowly trusted system alias on both sides (without normalizing arbitrary links). The hook installer now pins an open descriptor for the original legacy hook during content read, validates identity/link count while the original inode is still pinned, and refuses if a concurrent Windows unlink is denied. The race test treats *either* denied unlink or detected hardlink swap as safe rejection; no external target may be overwritten. Focused Windows test `python -m pytest tests/test_publish_hook_install.py tests/test_course_portfolio.py -q` exit 0, 41 passed, 2 skipped, 20 subtests. This is a candidate fix: remote macOS/Windows CI still must actually pass.
+Follow-up CI run `39888572396` demonstrated two distinct regressions: macOS synthetic reparse/link/path-swap fixtures compared the OS `/var` alias against normalized `/private/var` and missed the intended fixture path; Windows linked legacy hook upgrade still passed a rename/hardlink swap under runner conditions. The macOS test fixture now compares the same narrowly trusted system alias on both sides (without normalizing arbitrary links). An intermediate candidate attempted to pin an open descriptor while reading the legacy hook. **That candidate was abandoned**; final behavior refuses all existing hooks, without reading or replacing them. The race test treats *either* denied unlink or detected hardlink swap as safe rejection; no external target may be overwritten. Focused Windows test `python -m pytest tests/test_publish_hook_install.py tests/test_course_portfolio.py -q` exit 0, 41 passed, 2 skipped, 20 subtests. This is a candidate fix: remote macOS/Windows CI still must actually pass.
 
 ### Security decision: remove automatic hook upgrade (2026-10-23)
 
