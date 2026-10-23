@@ -1,6 +1,6 @@
 # ADR-0002: Selective course-portfolio publication
 
-Status: accepted product decision; engineering candidate implemented, release gated
+Status: accepted product decision; implementation and 15-job cross-platform CI merged to `main` (2026-10-23); human tutor and independent security acceptance remain gated
 Date: 2026-10-19
 Related: ADR-0001 (disposable learner UAT remains binding).
 

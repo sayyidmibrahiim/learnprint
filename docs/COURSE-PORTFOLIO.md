@@ -1,6 +1,6 @@
 # Course portfolios: staged publication with private evidence
 
-Status: **implementation candidate**, locally tested; live learner UAT and cross-platform CI not yet verified. Design: [ADR-0002](adr/0002-selective-course-portfolio-publication.md).
+Status (2026-10-23): **engineering integration verified on `main`**, with [15/15 cross-platform CI jobs successful](https://github.com/sayyidmibrahiim/learnprint/actions/runs/39909186179) on final commit `e8340e8`. **Human tutor UAT, independent learner-outcome studies, and independent adversarial security review remain open.** No actual learner portfolio has been approved or published. Design: [ADR-0002](adr/0002-selective-course-portfolio-publication.md).
 
 ## Select per course (default: selectable, never auto-public)
 
@@ -90,7 +90,7 @@ This excludes untracked files from future staging. If a snapshot is **already tr
 - Engineering tests: `pytest -q`, including disposable Git-index/hook tests.
 - Build package integrity: `python scripts/check_package.py`.
 - Local index check: `python scripts/learnprint_publish_guard.py --repo .`.
-- CI: multi-platform Python 3.9/3.12 suite plus publication-index guard on push/PR.
+- CI: CPython **3.11, 3.12, 3.13, 3.14, 3.15** across Windows, Ubuntu and macOS; final `main` run `39909186179`: **15/15 successful**. Python 3.9/3.10 are not supported production runtimes.
 - Human: real learner UAT for teaching, creating a genuine hands-on artifact, comparing public preview, and choosing private/public correctly. This is **NOT VERIFIED** until performed.
 - Security: no blind publishing, no silent file copy of private records, no remote network operation from the CLI.
 

@@ -1,4 +1,4 @@
-# Release Notes: Hardening Workspace (feature/hardening-workspace)
+# Learnprint release-candidate notes: merged into `main`
 
 ### Merged to main (2026-10-23)
 
@@ -34,7 +34,7 @@ The cross-platform CI matrix repeatedly demonstrated that automatic replacement 
 
 PR #9 CI run 39889996180: Windows Python 3.15 already passed after disabling unsafe existing-hook upgrade; macOS Python 3.13 exposed test-only infinite recursion because synthetic Path.lstat mock called `_trusted_system_alias`, which internally calls `Path.is_symlink`/lstat. New fixture `_fixture_path_key` uses strictly lexical `/var` to `/private/var` mapping under macOS; it never calls lstat/is_symlink, preventing recursive mocks while matching OS alias paths. Windows focused `python -m pytest tests/test_course_portfolio.py tests/test_publish_hook_install.py -q`: 41 passed, 2 skipped, 20 subtests. Cross-platform CI must run again on this commit.
 
-### 2026-10-23 full release-candidate verification (current)
+### Historical pre-merge local verification (superseded by green CI and merge evidence above)
 
 - `python -m pytest tests/ -q`: exit 0, **516 passed, 3 skipped, 385 subtests**, Windows, ~288.37 seconds.
 - `python -m unittest discover -s tests`: exit 0, **519 tests, OK (3 skipped)**, ~236.3 seconds; this is the exact test runner invoked by GitHub Actions.
@@ -75,7 +75,7 @@ Local smoke exit 0: `python scripts/check_package.py` (PACKAGING OK), `python sc
 
 
 
-Status: release candidate on `feature/hardening-workspace` at `cecda70`, all 15 CI jobs green, PR #9 open against `main`.
+Historical state before integration: release candidate on `feature/hardening-workspace` at `cecda70`, with 15 green CI jobs. **Superseded:** PR #9 merged to `main`, and final `main` commit `e8340e8` passed 15/15 jobs.
 Date: 2026-10-22, verification refreshed 2026-10-23. Python 3.11-3.15 standard library only, no new dependencies.
 
 ## What is in this release
