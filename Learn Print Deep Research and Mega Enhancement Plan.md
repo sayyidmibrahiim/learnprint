@@ -233,7 +233,7 @@ Each phase is a **separate, reviewable delivery unit**. Status / owner / evidenc
 3. Independently review portfolio code/guard/installer and policy, reconcile dated ADRs, classify every path preserve/refine/defer with justification.
 4. Run current tests in safe isolated mode. Historical 2026-10-19 report: 315 passed, 1 skipped, 68 subtests. **Not a fresh verification.** Re-check nondeterministic Windows timing.
 5. Create scoped changesets: H hardening/UAT; P privacy/docs; P engine/hook; P tests/CI; distribution test. Stage explicit filenames only, never add -A.
-6. Protect against unauthorized stage/commit/push: tool availability and owner approval are separate gates. Local hook upgrade only with explicit permission, reviewed source and safe rollback.
+6. Protect against unauthorized stage/commit/push: tool availability and owner approval are separate gates. Legacy hook upgrade is DISABLED after cross-host race failures; reviewed manual migration and safe rollback are required before replacing any existing hook.
 7. Achieve clean working tree **after** verified integration, not via deletion of unknown material.
 
 **Gate:** 27/27 paths accounted for; unmodified real Courses/; current full suite/package/guard pass; no prohibited staged paths; discrete attributable Git history (once authorized); no unreviewed deletions.

@@ -15,7 +15,7 @@ All course subjects and sizes can be *considered* for a future portfolio. The de
 
 - Root `.gitignore` ignores all of `Courses/*` except the `Courses/public/` publication entry point. The public snapshot directory is **not** permission to publish arbitrary files.
 - All Git-indexed Courses/ paths must pass `scripts/learnprint_publish_guard.py`: only validated UUID-scoped public snapshots whose hashes match `PUBLICATION.json` are allowed. Force-added canonical learner records and personal skills are rejected.
-- Install or upgrade the local pre-commit hook with `python scripts/install.py --target opencode --self --hooks --approve`. The installer refuses unknown existing hooks; do not silently override collaborator protections.
+- Install or upgrade the local pre-commit hook with `python scripts/install.py --target opencode --self --hooks --approve`. The installer refuses ALL existing hooks, including legacy Learnprint hooks; no automatic upgrade after cross-platform race failures. Preserve and manually review an old hook before new installation.
 - CI runs the index guard on every push/PR. Local hooks can be bypassed, GitHub secret scanning cannot detect every credential, and Git history/third-party clones can preserve removed content.
 - For an unpublished/private snapshot, add `/Courses/public/<uuid>/` to the **end** of the root .gitignore. If already tracked, ignoring it does not untrack it: removal from the index, Git history and any remotes is a separate, user-reviewed operation.
 - Never use `git add -f` on real learner data. Review exact staged paths/content before any manual commit. Publishing to a remote always requires separate explicit user approval.

@@ -59,14 +59,12 @@ class TestPrivacyHookInstallation(unittest.TestCase):
                          install.HOOK_SCRIPT)
         self.assertEqual(install.install_hooks(self.repo, approve=True), 2)
 
-    def test_only_known_legacy_hook_is_upgradable(self):
+    def test_existing_legacy_hook_is_preserved_even_with_approval(self):
         self.hook.write_text(install.LEGACY_HOOK_SCRIPT, encoding="utf-8")
         self.assertEqual(install.install_hooks(self.repo, approve=False), 2)
+        self.assertEqual(install.install_hooks(self.repo, approve=True), 2)
         self.assertEqual(self.hook.read_text(encoding="utf-8").replace("\r\n", "\n"),
                          install.LEGACY_HOOK_SCRIPT)
-        self.assertEqual(install.install_hooks(self.repo, approve=True), 0)
-        self.assertEqual(self.hook.read_text(encoding="utf-8").replace("\r\n", "\n"),
-                         install.HOOK_SCRIPT)
 
     def test_legacy_upgrade_link_swap_after_read_refuses_without_target_write(self):
         # A linked pre-commit can replace a known legacy hook just after

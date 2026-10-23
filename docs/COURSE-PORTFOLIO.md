@@ -68,9 +68,9 @@ Current limits: 32 listed source artifacts, 256 KiB per file, approximately 1 Mi
 
 The root `.gitignore` excludes canonical private course folders but makes `Courses/public/<uuid>/` visible to Git. The index checker reads **staged Git blobs**, not potentially different working-directory copies. Do not `git add -A` for this workflow.
 
-1. Install or upgrade the repository's Learnprint pre-commit hook after verifying its source:
+1. Install the repository's Learnprint pre-commit hook **only if no hook already exists**, after verifying its source:
    `python scripts/install.py --target opencode --self --hooks --approve`.
-   It only upgrades an exact known legacy Learnprint hook; it refuses unrelated/custom hooks. If the host prevents hook installation, **do not publish until equivalent verification is installed**.
+   Existing hooks, including old Learnprint hooks, are **never automatically overwritten** because cross-platform CI found an exploitable replacement race. Review/archive an existing hook manually before installing a new one; do not publish until equivalent verified protection is active.
 2. Stage only the exact, approved public snapshot files, explicitly by path, including `PUBLICATION.json`. Do not stage canonical source-course files or other private records.
 3. Run `python scripts/learnprint_publish_guard.py --repo .`. Any tracked private course data, unexpected indexed file, modified hash, or unknown publication manifest blocks the check.
 4. Inspect the staged diff and Git history before committing; remote push/PR is a **separate user-approved operation**. Neither a local hook nor GitHub secret scanning provides absolute privacy protection.
