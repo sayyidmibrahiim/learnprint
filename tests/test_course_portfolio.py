@@ -194,7 +194,7 @@ class TestPortfolio(unittest.TestCase):
 
         def fake_lstat(path, *args, **kwargs):
             info = real_lstat(path, *args, **kwargs)
-            if path == target:
+            if portfolio._trusted_system_alias(path) == portfolio._trusted_system_alias(target):
                 return SimpleNamespace(
                     st_mode=info.st_mode,
                     st_file_attributes=getattr(info, "st_file_attributes", 0) | 0x400)
@@ -294,7 +294,8 @@ class TestPortfolio(unittest.TestCase):
         original = Path.is_symlink
 
         def fake_is_symlink(path):
-            return path == parent or original(path)
+            return (portfolio._trusted_system_alias(path) == portfolio._trusted_system_alias(parent)
+                    or original(path))
 
         with mock.patch.object(Path, "is_symlink", fake_is_symlink):
             with self.assertRaisesRegex(ValueError, "symlink"):
@@ -345,7 +346,8 @@ class TestPortfolio(unittest.TestCase):
         triggered = []
 
         def change_parent_before_open(path, flags, *args, **kwargs):
-            if Path(path) == original_file and not triggered:
+            if (portfolio._trusted_system_alias(path) == portfolio._trusted_system_alias(original_file)
+                    and not triggered):
                 self.lab.rename(moved)
                 self.lab.mkdir()
                 (moved / "query.sql").rename(original_file)

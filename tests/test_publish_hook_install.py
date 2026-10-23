@@ -88,10 +88,16 @@ class TestPrivacyHookInstallation(unittest.TestCase):
 
         with mock.patch.object(Path, "read_text", swap_after_read):
             self.assertEqual(install.install_hooks(self.repo, approve=True), 2)
-        self.assertEqual(swapped, [True])
+        # Windows may refuse the attempted unlink while the original inode
+        # is pinned open. POSIX may allow the swap; both must reject upgrade.
+        self.assertIn(swapped, ([], [True]))
         self.assertEqual(outside.read_text(encoding="utf-8"),
                          install.LEGACY_HOOK_SCRIPT)
-        self.assertEqual(self.hook.stat().st_nlink, 2)
+        if swapped:
+            self.assertEqual(self.hook.stat().st_nlink, 2)
+        else:
+            self.assertEqual(self.hook.read_text(encoding="utf-8"),
+                             install.LEGACY_HOOK_SCRIPT)
 
     def test_unrecognized_hook_cannot_be_overwritten(self):
         self.hook.write_text("# custom\n", encoding="utf-8")

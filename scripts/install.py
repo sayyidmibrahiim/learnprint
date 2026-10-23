@@ -224,8 +224,22 @@ def install_hooks(dest, dry_run=False, approve=False):
     original_identity = None
     if hook.exists():
         original_info = hook.lstat()
-        original_identity = _hook_file_identity(hook)[:3]
-        prior = hook.read_text(encoding="utf-8").replace("\r\n", "\n")
+        # Pin the original inode while reading. Without this handle, NTFS can
+        # recycle a deleted file index during a hardlink swap, and separate
+        # path-level checks cannot establish that the legacy hook was stable.
+        # The handle also prevents deletion on Windows implementations that
+        # do not grant FILE_SHARE_DELETE. Fail closed if a concurrent swap is
+        # attempted instead of upgrading a different file.
+        try:
+            with hook.open("rb") as pinned:
+                original_identity = _hook_file_identity(hook)[:3]
+                prior = hook.read_text(encoding="utf-8").replace("\r\n", "\n")
+                if (_hook_file_identity(hook)[:3] != original_identity or
+                        _hook_file_identity(hook)[3] != 1 or
+                        os.fstat(pinned.fileno()).st_size != original_info.st_size):
+                    return _fail("Pre-commit hook changed during read; refusing upgrade")
+        except OSError as exc:
+            return _fail(f"Cannot safely read legacy pre-commit hook: {exc}")
         if prior == desired:
             return _fail(f"Refusing to overwrite existing hook {hook}")
         if prior != LEGACY_HOOK_SCRIPT or desired != HOOK_SCRIPT:
