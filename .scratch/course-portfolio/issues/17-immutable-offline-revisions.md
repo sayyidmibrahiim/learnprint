@@ -1,6 +1,6 @@
 # 17 — Immutable offline portfolio revision regression
 
-Status: ready-for-human
+Status: resolved
 Date: 2026-10-22
 Task: W8-02
 
@@ -27,3 +27,4 @@ Claimed paths: tests/test_course_portfolio.py, docs/COURSE-PORTFOLIO.md, this is
 - Exact full results: `python -m pytest tests/ -q --tb=no` exit 0, **482 passed, 2 skipped, 244 subtests** (96.67s); `python scripts/check_package.py` exit 0 PACKAGING OK; `python scripts/learnprint_publish_guard.py --repo .` exit 0, 0 public courses/files and 0 private indexed.
 - Scope changed: `tests/test_course_portfolio.py`, `docs/COURSE-PORTFOLIO.md`, this issue, `to-do.md`. No real Courses, hook, staging, commit, push, or remote publication.
 - Remaining decision gate: public Git revision/version namespace schema and index guard must receive separate ADR/owner review before implementation. Next safe task: W8-02 design review with exact public path/manifest/index semantics; alternatively continue unrelated W9/W10 verification. Human UAT, cross-OS CI, independent security review and W0-05 scoped Git integration remain release gates.
+- 2026-10-23, release verification relay: Implemented checksum-sealed immutable portfolio revisions that work offline in `scripts/learnprint_portfolio.py`. Regression coverage: `tests/test_course_portfolio.py`. Evidence at head `cecda70`: local `python -m unittest discover -s tests` exit 0, 519 tests OK (3 skipped); `python -m pytest tests/ -q` exit 0, 516 passed, 3 skipped, 385 subtests passed; GitHub Actions runs `39890427415` (push) and `39890434260` (pull_request) report 15/15 jobs success on CPython 3.11-3.15 across Ubuntu, Windows and macOS. Engineering evidence does not substitute for real learner or human tutor acceptance.

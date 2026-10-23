@@ -1,5 +1,13 @@
 # Release Notes: Hardening Workspace (feature/hardening-workspace)
 
+### Release-candidate verification, all 15 CI jobs green (2026-10-23)
+
+- Head commit `cecda70cd0a4e14bfbb08fb3da0ebe891e3924a1` on `feature/hardening-workspace`; PR #9 targets `main`.
+- GitHub Actions run `39890427415` (push) and run `39890434260` (pull_request): **15 of 15 jobs success**, covering ubuntu-latest, windows-latest and macos-latest for CPython 3.11, 3.12, 3.13, 3.14 and 3.15.
+- Local Windows evidence on the same head: `python -m unittest discover -s tests` exit 0, **519 tests, OK (3 skipped)**; `python -m pytest tests/ -q` exit 0, **516 passed, 3 skipped, 385 subtests passed**.
+- Static and privacy gates: `python scripts/check_package.py` exit 0 PACKAGING OK; `python scripts/learnprint_publish_guard.py --repo .` exit 0 with zero indexed paths; `profiles/founder-default.json` and `templates/learner-profile-starter.json` both VALID; `learnprint.py --help` exit 0.
+- Still open and honestly not PASS: real multilingual tutor UAT on a live host, independent human learning efficacy, independent adversarial filesystem security review. See `docs/research/2026-10-23-production-release-gates.md`.
+
 ### PR #9 cross-platform failure remediation (2026-10-23)
 
 First remote CI run 39843827147: Ubuntu matrix passed, Windows/macOS failures observed. Root causes: macOS legitimate /var alias wrongly rejected, Windows junction fixture lexical-vs-resolved path mismatch, Windows hook link-swap identity false negative. Changed portfolio chain canonicalization for only the exact OS alias, fixed junction test parent-only canonicalization, and hardened Windows hook identity via kernel32. Local rerun `python -m pytest tests/ -q`: 516 passed, 3 skipped, 385 subtests, exit0; focused 47 passed, 3 skipped. This update requires fresh remote CI before release; do not treat initial CI as green.
@@ -29,12 +37,12 @@ PR #9 CI run 39889996180: Windows Python 3.15 already passed after disabling uns
 - `python scripts/learnprint.py course validate`: exit 0, VALID for the three private courses. No private learner record staged, no auto-export.
 - Remaining: real GitHub Actions jobs not observed, live OpenCode/language human UAT not observed, independent adversarial filesystem security review not done, real learner efficacy not proven. Do not call these PASS.
 - Research: Python 3.15.1 released October 21, 2026 and support matrix 3.11–3.15; updated official Action majors to v7. See `docs/research/2026-10-23-production-release-gates.md`.
-- Git: 49 public tracked/new paths staged explicitly and reviewed; local commit/push/merge results remain **TO BE VERIFIED** at the time of this entry.
+- Git: 49 public tracked/new paths were staged explicitly and reviewed; that local entry predates the published commits and is superseded by the green CI evidence above (`cecda70`).
 
 
 ## Latest execution evidence (2026-10-23, new remediation)
 
-- Official current Python release check: Python 3.15.1 dated 2026-10-21, Python 3.9 EOL since 2025 and 3.10 EOL since 2026-10-01. CI source updated to actions/checkout@v7 and setup-python@v7 with CPython 3.11–3.15 across ubuntu/windows/macos. Remote jobs are NOT YET run by this local edit.
+- Official current Python release check: Python 3.15.1 dated 2026-10-21, Python 3.9 EOL since 2025 and 3.10 EOL since 2026-10-01. CI source uses actions/checkout@v7 and setup-python@v7 with CPython 3.11–3.15 across ubuntu/windows/macos. **Superseded:** all 15 jobs passed on `cecda70` in runs `39890427415` and `39890434260`.
 - Enforced evidence/FSM binding: if the course has a private tutor-session file, `record` with independent application, transfer or delayed review must match actual persisted phase, `task_id` and help-level. Backward compatibility for courses without FSM retained. Added two focused regression tests, including refusing false unassisted assessment of a hinted task.
 - Hardened derived docs update against linked files and changed content, bounded pre-image reads and directory chain identity; CRLF known-stub backward compatibility and real-byte preview digest preserved. Added CRLF, hardlink and changed-file tests; one Windows symlink test remains skipped due privilege.
 - **Latest Windows local full verification:** `python -m pytest tests/ -q` exit 0, **516 passed, 3 skipped, 385 subtests**, 288.37 s. This is the latest complete run superseding previous 511/3.
@@ -43,9 +51,9 @@ PR #9 CI run 39889996180: Windows Python 3.15 already passed after disabling uns
 
 ## Current local verification addendum (2026-10-23)
 
-**Git status:** active local implementation is on `feature/hardening-workspace`, not yet integrated to `main` or published to GitHub. All Oct-22 numbers below are historical baselines; the current verified one-command local Windows test result is **511 passed, 3 skipped, 385 subtests passed** from `python -m pytest tests/ -q` (exit 0, 153.00 seconds).
+**Git status:** the hardening work is committed on `feature/hardening-workspace` and published to GitHub as PR #9, which is not merged yet. All Oct-22 numbers below are historical baselines. Current verified local Windows results on `cecda70`: `python -m pytest tests/ -q` **516 passed, 3 skipped, 385 subtests passed** (exit 0) and `python -m unittest discover -s tests` **519 tests, OK (3 skipped)**. Remote CI on the same head: 15 of 15 jobs success.
 
-New capabilities in this uncommitted local iteration:
+New capabilities now committed on this branch:
 - Canonical subject-agnostic multilingual tutor writing/stage policy (`protocols/TUTOR-LANGUAGE-AND-STAGES.md`), byte-checked OpenCode/Claude mirrors and manual UAT across SQL/math/history/music/Japanese/DNS/large curricula; no surprise code-mixed scored sentences.
 - Per-course `journey-card` returns honest screening/lesson/application/transfer/delayed labels and unit-position ASCII. Added consent-gated `course tutor-init/tutor-status/tutor-transit` backed by the existing deterministic tutor FSM and automatically consumed by `journey-card` when present; phase transitions do not manufacture learning evidence. Optional persisted FSM is checked against the same course; agent-reported stage is explicitly labeled not-verified.
 - Portable `record --from-file PRIVATE.json` handles rubric JSON as an object, avoiding PowerShell argv stripping, and retains normal approval and ledger guards.
@@ -55,14 +63,14 @@ New capabilities in this uncommitted local iteration:
 
 Local smoke exit 0: `python scripts/check_package.py` (PACKAGING OK), `python scripts/learnprint_publish_guard.py --repo .` (0 private indexed), `python scripts/learnprint.py course validate` (VALID); all 3 actual courses listed as selective portfolio options, no exports.
 
-**Limitations not hidden:** 3 test skips (including a Windows symlink permission scenario); real low-cost-model/other-host learning-language UAT, independent human learning efficacy, Python 3.9 actual runtime and Linux/macOS CI not proven by these Windows tests; Redundant independently-created GitHub PR #8 CLOSED unmerged (cleanup only). Local Git commit/push/merge NOT performed. See `to-do.md` CURRENT EXECUTION HANDOFF for exact status and safe next action.
+**Limitations not hidden:** 3 test skips (including a Windows symlink permission scenario); real low-cost-model/other-host learning-language UAT, independent human learning efficacy and independent adversarial filesystem security review are not proven. That paragraph predates the published branch; commit, push and cross-platform CI have since completed on `cecda70` (runs `39890427415`, `39890434260`), merge into `main` has not.
 
 ---
 
 
 
-Status: release candidate, uncommitted work tree (see to-do.md handoff card).
-Date: 2026-10-22. Python 3.9+ standard library only, no new dependencies.
+Status: release candidate on `feature/hardening-workspace` at `cecda70`, all 15 CI jobs green, PR #9 open against `main`.
+Date: 2026-10-22, verification refreshed 2026-10-23. Python 3.11-3.15 standard library only, no new dependencies.
 
 ## What is in this release
 
@@ -120,9 +128,5 @@ Roadmap phases W6-W11 of the mega enhancement plan, verified against
 
 ## Not verified here (remaining gates)
 
-- Cross-OS CI (Windows-only runs), real Python 3.9 runtime (dev runs
-  3.14; syntax gate covers 3.9 constructs statically), installed-hook
-  upgrade consent, and human UAT stay documented as open gates in
-  `to-do.md` (W0 acceptance cards).
-- W0-05 staging/commit waits for owner approval: exact path list,
-  privacy evidence and rollback notes are in the to-do.md handoff card.
+- Cross-OS CI is now green on `cecda70` (15/15 jobs, runs `39890427415` and `39890434260`). Real multilingual tutor UAT on a live host, independent human learning efficacy, and independent adversarial filesystem review remain open gates documented in `to-do.md`.
+- W0-05 staging/commit completed; exact path lists, privacy evidence and rollback notes stay in the `to-do.md` handoff records. Merge into `main` is still a separate decision.

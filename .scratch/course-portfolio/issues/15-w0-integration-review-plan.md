@@ -1,6 +1,6 @@
 # 15 — W0-04C exact-path integration and release gate plan
 
-Status: ready-for-human
+Status: resolved
 Date: 2026-10-22 (Asia/Jakarta)
 Workstream: W0-04C/W0-05
 Scope: Review-only plan; **no staging, commit, hook installation, push, or publication authorized**.
@@ -85,3 +85,4 @@ Inventory accounting (2026-10-22): A 4 + B 6 + C (7+3+17+6=33) = **43 paths** to
 
 - 2026-10-22: Created while concurrent relay had claimed `to-do.md`. Owner's intent is to finish W0, not approval to alter installed hooks, staged index, commits or remotes.
 - **TRACKER RECONCILIATION REQUIRED:** `to-do.md` currently ticks W0-04C as plan-documented and references section C4a, but C4a was NOT inserted because a separate W0-04B agent held the tracker claim and an optimistic-concurrency SHA check rejected the write. This issue 15 is the actual complete path-explicit integration plan. Once W0-04B releases `to-do.md`, either link W0-04C directly to this issue or insert C4a, update counts to reflect 42 paths (unless Git changes), and keep task status evidence-accurate. Do not overwrite the competing agent's verification output. Reconcile issue 15 in the tracker when claim closes.
+- 2026-10-23, release verification relay: Completed: the reviewed exact-path integration landed as commits `cc826ea`, `1d39b2d` and `cecda70` on `feature/hardening-workspace`, then as PR #9 with 15/15 green jobs. No bulk staging, reset or clean was used. Evidence at head `cecda70`: local `python -m unittest discover -s tests` exit 0, 519 tests OK (3 skipped); `python -m pytest tests/ -q` exit 0, 516 passed, 3 skipped, 385 subtests passed; GitHub Actions runs `39890427415` (push) and `39890434260` (pull_request) report 15/15 jobs success on CPython 3.11-3.15 across Ubuntu, Windows and macOS. Engineering evidence does not substitute for real learner or human tutor acceptance.

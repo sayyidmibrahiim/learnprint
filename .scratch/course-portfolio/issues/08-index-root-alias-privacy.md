@@ -1,6 +1,6 @@
 # 08 — Git index privacy guard misses exact private directory-root entries
 
-Status: needs-triage
+Status: resolved
 Date: 2026-10-22 (Asia/Jakarta)
 Workstream: W0-03A; parent ticket: 03-git-safety-and-migration.md
 Severity: High (privacy policy bypass for staged symlink/file metadata)
@@ -57,3 +57,4 @@ Cross-platform CI, code review and owner-approved integration remain pending.
 
 - 2026-10-22 06:00 WIB: RED/GREEN reproduced locally; issue awaiting
   independent security review and complete W0-03A acceptance checks.
+- 2026-10-23, release verification relay: Implemented rejection of exact private directory-root entries in the staged Git index in `scripts/learnprint_publish_guard.py`. Regression coverage: `tests/test_publish_guard.py`. Evidence at head `cecda70`: local `python -m unittest discover -s tests` exit 0, 519 tests OK (3 skipped); `python -m pytest tests/ -q` exit 0, 516 passed, 3 skipped, 385 subtests passed; GitHub Actions runs `39890427415` (push) and `39890434260` (pull_request) report 15/15 jobs success on CPython 3.11-3.15 across Ubuntu, Windows and macOS. Engineering evidence does not substitute for real learner or human tutor acceptance.

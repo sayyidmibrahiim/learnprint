@@ -1,6 +1,6 @@
 # 06 — Live UAT on disposable workspace
 
-Status: ready-for-agent
+Status: ready-for-human
 Blocked by: 03, 05
 
 ## Purpose
@@ -52,3 +52,7 @@ with the owner present.
 ## Commit
 
 None directly — only new defect tickets (if any), one commit per ticket file.
+
+## Comments
+
+- 2026-10-23, release verification relay: Still OPEN. A disposable live UAT with a real user on a second host was never performed. Automated CLI smoke and synthetic fixtures are not human UAT, so this ticket must not be marked resolved from CI. Evidence at head `cecda70`: local `python -m unittest discover -s tests` exit 0, 519 tests OK (3 skipped); `python -m pytest tests/ -q` exit 0, 516 passed, 3 skipped, 385 subtests passed; GitHub Actions runs `39890427415` (push) and `39890434260` (pull_request) report 15/15 jobs success on CPython 3.11-3.15 across Ubuntu, Windows and macOS. Engineering evidence does not substitute for real learner or human tutor acceptance.

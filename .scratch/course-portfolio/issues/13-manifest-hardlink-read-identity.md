@@ -1,6 +1,6 @@
 # 13 — Manifest hardlink and open-time identity validation
 
-Status: needs-triage
+Status: resolved
 Date: 2026-10-22 (Asia/Jakarta)
 Workstream: W0-03C portfolio exporter, manifest trust boundary
 Related: 07-windows-reparse-export-boundary.md; 10-manifest-parent-boundary.md
@@ -34,3 +34,4 @@ This session changed only the existing untracked portfolio module/tests, this is
 ## Comments
 
 - 2026-10-22: RED confirmed, two regressions GREEN, full suite and package/index/CLI passes observed. Ready for independent review, parent W0-03C remains IN_PROGRESS.
+- 2026-10-23, release verification relay: Implemented manifest hardlink and open-time identity validation in `scripts/learnprint_portfolio.py`. Regression coverage: `tests/test_course_portfolio.py`, `tests/test_publish_hook_install.py`. Evidence at head `cecda70`: local `python -m unittest discover -s tests` exit 0, 519 tests OK (3 skipped); `python -m pytest tests/ -q` exit 0, 516 passed, 3 skipped, 385 subtests passed; GitHub Actions runs `39890427415` (push) and `39890434260` (pull_request) report 15/15 jobs success on CPython 3.11-3.15 across Ubuntu, Windows and macOS. Engineering evidence does not substitute for real learner or human tutor acceptance.

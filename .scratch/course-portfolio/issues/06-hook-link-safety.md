@@ -1,6 +1,6 @@
 # 06 — Refuse linked pre-commit hooks during privacy guard installation
 
-Status: needs-triage
+Status: resolved
 Date: 2026-10-22 (Asia/Jakarta)
 Workstream: W0-03B; parent ticket: 03-git-safety-and-migration.md
 Severity: High (local file integrity; requires explicit hook-upgrade approval)
@@ -54,3 +54,4 @@ based on this single local regression.
 
 - 2026-10-22 03:00 WIB: Initial defect and locally tested patch recorded for
   independent maintainer security review. No Git integration authorized.
+- 2026-10-23, release verification relay: Resolved fail-closed. `scripts/install.py` writes a hook only when the path is proven absent and refuses every pre-existing or linked hook without mutating it. Regression coverage: `tests/test_publish_hook_install.py`. Manual reviewed migration is documented in `docs/PRODUCTION-WALKTHROUGH.md`. Evidence at head `cecda70`: local `python -m unittest discover -s tests` exit 0, 519 tests OK (3 skipped); `python -m pytest tests/ -q` exit 0, 516 passed, 3 skipped, 385 subtests passed; GitHub Actions runs `39890427415` (push) and `39890434260` (pull_request) report 15/15 jobs success on CPython 3.11-3.15 across Ubuntu, Windows and macOS. Engineering evidence does not substitute for real learner or human tutor acceptance.

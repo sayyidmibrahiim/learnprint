@@ -1,6 +1,6 @@
 # W4-03: Deterministic synthetic retrieval/workload benchmark
 
-Status: ready-for-human
+Status: resolved
 Date: 2026-10-22 (Asia/Jakarta)
 Owner: GPT-6 relay via CodexProLatestFix
 Scope: New benchmark module, tests, this issue, and to-do.md.
@@ -34,3 +34,4 @@ Implementation: `scripts/learnprint_scheduler_benchmark.py`; tests: `tests/test_
 ## Comments
 
 - 2026-10-22 15:29 WIB: Scope claimed after branch/status preflight: feature/hardening-workspace; 18 tracked modified, 42 untracked, 0 staged. Exact HEAD could not be refreshed because read-only Git command was blocked by connector. No active W4-03 claim found. No actual learner data or Git operations in scope.
+- 2026-10-23, release verification relay: Resolved as an engineering diagnostic: `scripts/learnprint_scheduler_benchmark.py` with `tests/test_scheduler_benchmark.py` compares fixed_v1 and opt-in adaptive_v2 on seeded simulated journeys. It claims no human learning gain, and none is implied by the green suite. Evidence at head `cecda70`: local `python -m unittest discover -s tests` exit 0, 519 tests OK (3 skipped); `python -m pytest tests/ -q` exit 0, 516 passed, 3 skipped, 385 subtests passed; GitHub Actions runs `39890427415` (push) and `39890434260` (pull_request) report 15/15 jobs success on CPython 3.11-3.15 across Ubuntu, Windows and macOS. Engineering evidence does not substitute for real learner or human tutor acceptance.

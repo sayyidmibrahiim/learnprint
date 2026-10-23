@@ -1,6 +1,6 @@
 # Spec: Finish & perfect Learnprint (post-hardening)
 
-Status: ready-for-agent
+Status: resolved except live human UAT; engineering verified on head cecda70
 Date: 2026-10-17 (grilling session settled all open decisions)
 
 ## Goal

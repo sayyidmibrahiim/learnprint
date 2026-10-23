@@ -1,6 +1,6 @@
 # 04 — Verify distribution/claude-plugin sync
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: none
 
 ## Problem
@@ -66,3 +66,4 @@ OK).
 - Note for the planner: nothing runs a sync check (ticket premise); future
   drift would go unnoticed again — consider a sync-check ticket (not filed
   here per D7-only-for-defects policy).
+- 2026-10-23, release verification relay: Resolved: distribution and host mirrors are byte-checked by `tests/test_skill_distribution_sync.py`, and `python scripts/check_package.py` exits 0 with PACKAGING OK. Evidence at head `cecda70`: local `python -m unittest discover -s tests` exit 0, 519 tests OK (3 skipped); `python -m pytest tests/ -q` exit 0, 516 passed, 3 skipped, 385 subtests passed; GitHub Actions runs `39890427415` (push) and `39890434260` (pull_request) report 15/15 jobs success on CPython 3.11-3.15 across Ubuntu, Windows and macOS. Engineering evidence does not substitute for real learner or human tutor acceptance.

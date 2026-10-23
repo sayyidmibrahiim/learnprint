@@ -9,6 +9,16 @@
 
 > **Meaning of this file:** Shared state for *all* agents, models and harnesses. This is the durable truth about engineering progress, known dirt, decisions and handoff. Project-local files outrank forgotten chat context. Never treat an old model's “done” statement as test evidence. Existing uncommitted changes are protected work, not garbage.
 
+## CURRENT STATE — 2026-10-23, verified (supersedes every "not yet verified" note below)
+
+- Branch `feature/hardening-workspace`, HEAD `cecda70cd0a4e14bfbb08fb3da0ebe891e3924a1`, worktree clean, remote in sync.
+- PR #9 (https://github.com/sayyidmibrahiim/learnprint/pull/9) targets `main`; state `MERGEABLE`, `mergeStateStatus: CLEAN`, not merged.
+- **Cross-platform CI is green on this exact head:** push run `39890427415` and pull-request run `39890434260` each report **15/15 jobs success** across ubuntu-latest, windows-latest, macos-latest and CPython 3.11, 3.12, 3.13, 3.14, 3.15.
+- **Local Windows evidence on the same head:** `python -m unittest discover -s tests` exit 0, 519 tests, OK (3 skipped); `python -m pytest tests/ -q` exit 0, 516 passed, 3 skipped, 385 subtests passed.
+- `python scripts/check_package.py` exit 0 PACKAGING OK. `python scripts/learnprint_publish_guard.py --repo .` exit 0 with zero indexed paths. `profiles/founder-default.json` and `templates/learner-profile-starter.json` VALID. `learnprint.py --help` exit 0.
+- **Hook policy is final and fail-closed:** the installer never replaces an existing `.git/hooks/pre-commit`, including a legacy Learnprint hook. Manual reviewed migration only. See `scripts/install.py` and `tests/test_publish_hook_install.py`.
+- **Still open, human-only, never to be relabeled DONE:** real multilingual tutor UAT on a live host, independent human learning efficacy/retention, independent adversarial filesystem security review. Merge into `main` is a separate pending decision.
+
 ## A. Takeover protocol (mandatory at the beginning of EVERY session)
 
 1. Open the exact Learnprint repository and read AGENTS.md, this tracker, [the research plan](Learn%20Print%20Deep%20Research%20and%20Mega%20Enhancement%20Plan.md), [Code Style.md](Code%20Style.md), CONTEXT.md, docs/agents/issue-tracker.md, and the applicable rules/ and ADRs. Treat private learner materials as out-of-scope unless a specifically authorized task requires them.

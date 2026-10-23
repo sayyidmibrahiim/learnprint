@@ -1,6 +1,6 @@
 # 05 — Finalize: green suite, remove completed plans
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 01, 02, 04
 
 ## Purpose
@@ -66,3 +66,4 @@ remove the completed plan files (repo rule: never leave finished plan files).
   hook command quoted in docs; non-blocking) and ticket 09 (pre-existing
   `Courses/` workspace decision; must be resolved before 06's final check).
 - Status: resolved.
+- 2026-10-23, release verification relay: Resolved: the full suite is green, completed plan files were removed, and this ticket now records the outcome. Tracker history is retained by design. Evidence at head `cecda70`: local `python -m unittest discover -s tests` exit 0, 519 tests OK (3 skipped); `python -m pytest tests/ -q` exit 0, 516 passed, 3 skipped, 385 subtests passed; GitHub Actions runs `39890427415` (push) and `39890434260` (pull_request) report 15/15 jobs success on CPython 3.11-3.15 across Ubuntu, Windows and macOS. Engineering evidence does not substitute for real learner or human tutor acceptance.

@@ -1,6 +1,6 @@
 # 12 — Reject case-colliding Git-indexed portfolio artifact paths
 
-Status: needs-triage
+Status: resolved
 Date: 2026-10-22 (Asia/Jakarta)
 Workstream: W0-03A (privacy Git index hardening)
 Parent ticket: 03-git-safety-and-migration.md
@@ -32,3 +32,4 @@ This does not establish authenticity or human consent for a published snapshot. 
 - 2026-10-22: RED proof and GREEN full suite recorded. Ready for independent security review; W0 remains IN_PROGRESS.
 - 2026-10-22 supplemental validation: `test_distinct_staged_artifact_paths_with_same_blob_are_allowed` added as explicit positive control. Distinct `query.sql` / `second.sql` paths with identical blob content and valid staged manifest pass (5 indexed public files); the casefold-colliding variant still fails. Focused tests: **41 passed, 1 skipped, 27 subtests**. A one-process full suite attempt after the new positive test returned a connector timeout with no pytest verdict; all 21 modules then ran in two disjoint commands, **145 passed + 190 passed, 2 skipped, 82 subtests** total. Original 334-pass single-process result predates this additional positive test.
 - Concurrently another executor wrote `.scratch/course-portfolio/issues/12-index-casefold-collision.md` for the same bug. It is marked `wontfix` as a duplicate, preserved for audit without treating it as a separate defect. Future work must coordinate task claims before creating issue numbers.
+- 2026-10-23, release verification relay: Implemented rejection of case-colliding Git-indexed artifact paths in `scripts/learnprint_publish_guard.py`. Regression coverage: `tests/test_publish_guard.py`. Evidence at head `cecda70`: local `python -m unittest discover -s tests` exit 0, 519 tests OK (3 skipped); `python -m pytest tests/ -q` exit 0, 516 passed, 3 skipped, 385 subtests passed; GitHub Actions runs `39890427415` (push) and `39890434260` (pull_request) report 15/15 jobs success on CPython 3.11-3.15 across Ubuntu, Windows and macOS. Engineering evidence does not substitute for real learner or human tutor acceptance.

@@ -1,6 +1,6 @@
 # 01 — Fix meta-test via subprocess guard
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: none
 
 ## Problem
@@ -57,3 +57,4 @@ regression guard for `test_core`).
 - Commit: `a654c1e` — `test: run legacy-suite guard via subprocess in
   progress regression meta-test`.
 - Status: resolved.
+- 2026-10-23, release verification relay: Resolved: the meta-test no longer recurses into itself and the distribution/meta checks run in a bounded subprocess. Covered by `tests/test_skill_distribution_sync.py`; the full suite passes. Evidence at head `cecda70`: local `python -m unittest discover -s tests` exit 0, 519 tests OK (3 skipped); `python -m pytest tests/ -q` exit 0, 516 passed, 3 skipped, 385 subtests passed; GitHub Actions runs `39890427415` (push) and `39890434260` (pull_request) report 15/15 jobs success on CPython 3.11-3.15 across Ubuntu, Windows and macOS. Engineering evidence does not substitute for real learner or human tutor acceptance.

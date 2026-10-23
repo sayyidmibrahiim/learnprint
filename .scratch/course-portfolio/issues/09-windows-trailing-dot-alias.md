@@ -1,6 +1,6 @@
 # 09 — Reject Windows trailing-dot aliases in curated artifact paths
 
-Status: needs-triage
+Status: resolved
 Date: 2026-10-22 (Asia/Jakarta)
 Workstream: W0-03C; parent ticket: 02-preview-showcase-builder.md
 Severity: Medium (cross-platform path ambiguity; possible unintended artifact selection)
@@ -25,3 +25,4 @@ This closes only the trailing-dot manifest path ambiguity. It does not prove saf
 ## Comments
 
 - 2026-10-22 07:18 WIB: RED/GREEN reproduced in disposable tests; scoped fix and segmented regression evidence recorded. W0-03C remains IN_PROGRESS pending independent review and cross-host tests.
+- 2026-10-23, release verification relay: Implemented rejection of Windows trailing-dot and trailing-space aliases in curated artifact paths across `scripts/learnprint_portfolio.py` and `scripts/learnprint_publish_guard.py`. Regression coverage: `tests/test_qa_hardening.py`. Evidence at head `cecda70`: local `python -m unittest discover -s tests` exit 0, 519 tests OK (3 skipped); `python -m pytest tests/ -q` exit 0, 516 passed, 3 skipped, 385 subtests passed; GitHub Actions runs `39890427415` (push) and `39890434260` (pull_request) report 15/15 jobs success on CPython 3.11-3.15 across Ubuntu, Windows and macOS. Engineering evidence does not substitute for real learner or human tutor acceptance.

@@ -34,7 +34,7 @@
 | rules/EVIDENCE.md | **Canonical evidence eligibility rules** | Do not create a second or contradicting mastery evaluator |
 | rules/PRIVACY.md and ADR-0002 | Private/public publication boundaries | Curated snapshot only, owner consent required |
 | scripts/learnprint.py | Existing public CLI commands and compatibility | Extend carefully, don't introduce breaking flags casually |
-| scripts/learnprint_portfolio.py and publish_guard.py | Uncommitted portfolio candidate | Review and stabilize in W0 before extending |
+| scripts/learnprint_portfolio.py and publish_guard.py | Committed and CI-verified | Extend only with privacy and negative-path tests |
 | skills/learnprint* + .agents/ + distribution/ | Portable agent/teaching entry points | Single canonical policy and test mirror parity |
 | schemas/, templates/ | Versioned input/output interfaces | Validate data, document migrations, preserve old files |
 | tests/ | Regression, security, contract and behavioral fixtures | No privileged access to real learner data |

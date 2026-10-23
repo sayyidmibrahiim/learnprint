@@ -1,6 +1,6 @@
 # 07 — Reject Windows reparse/junction aliases at portfolio boundaries
 
-Status: needs-triage
+Status: resolved
 Date: 2026-10-22 (Asia/Jakarta)
 Workstream: W0-03C; parent ticket: 02-preview-showcase-builder.md
 Severity: High (potential private source alias or unintended export destination)
@@ -64,3 +64,4 @@ installed hooks, Git index, commits, and remotes were not modified.
   Courses/ access, hook installation, actual index staging, commits or push.
   W0-03C remains IN_PROGRESS for directory-chain race review, other reparse
   forms, independent CI and human acceptance.
+- 2026-10-23, release verification relay: Implemented rejection of Windows reparse and junction aliases at portfolio boundaries in `scripts/learnprint_portfolio.py`. Regression coverage: `tests/test_course_portfolio.py`. Evidence at head `cecda70`: local `python -m unittest discover -s tests` exit 0, 519 tests OK (3 skipped); `python -m pytest tests/ -q` exit 0, 516 passed, 3 skipped, 385 subtests passed; GitHub Actions runs `39890427415` (push) and `39890434260` (pull_request) report 15/15 jobs success on CPython 3.11-3.15 across Ubuntu, Windows and macOS. Engineering evidence does not substitute for real learner or human tutor acceptance.

@@ -33,3 +33,4 @@ Independent Windows/macOS/Linux CI, actual junction/reparse and TOCTOU behavior,
 ## Comments
 
 - 2026-10-22: RED reproduced, fail-closed casefold guard added, distinct-path positive control GREEN, all 21 test modules passed in segmented runs. Ready for independent review; release gate remains open.
+- 2026-10-23, release verification relay: Historical duplicate. Superseded by `12-case-collision-git-index.md`, which implements and tests the same defect class. Status intentionally stays wontfix so the duplicate is not reopened. Evidence at head `cecda70`: local `python -m unittest discover -s tests` exit 0, 519 tests OK (3 skipped); `python -m pytest tests/ -q` exit 0, 516 passed, 3 skipped, 385 subtests passed; GitHub Actions runs `39890427415` (push) and `39890434260` (pull_request) report 15/15 jobs success on CPython 3.11-3.15 across Ubuntu, Windows and macOS. Engineering evidence does not substitute for real learner or human tutor acceptance.

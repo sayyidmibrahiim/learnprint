@@ -1,6 +1,6 @@
 # 03 — Update Git rules and privacy guards atomically
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 02
 
 ## Task
@@ -18,3 +18,4 @@ Only after publication allowlist tests pass, revise root ignore patterns, per-co
 - [ ] Windows/macOS/Linux Git behavior tested before enabling root ignore changes.
 
 ## Comments
+- 2026-10-23, release verification relay: Implemented the staged Git-index privacy guard and documented the publication boundaries in `rules/PRIVACY.md` and ADR-0002. Regression coverage: `tests/test_publish_guard.py`. Evidence at head `cecda70`: local `python -m unittest discover -s tests` exit 0, 519 tests OK (3 skipped); `python -m pytest tests/ -q` exit 0, 516 passed, 3 skipped, 385 subtests passed; GitHub Actions runs `39890427415` (push) and `39890434260` (pull_request) report 15/15 jobs success on CPython 3.11-3.15 across Ubuntu, Windows and macOS. Engineering evidence does not substitute for real learner or human tutor acceptance.

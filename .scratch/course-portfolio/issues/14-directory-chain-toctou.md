@@ -1,6 +1,6 @@
 # 14 — Directory-chain replacement / TOCTOU in portfolio preview and export
 
-Status: needs-triage
+Status: resolved
 Date: 2026-10-22 (Asia/Jakarta)
 Workstream: W0-03C portfolio filesystem trust boundary
 Severity: High (path boundary and export destination may change after preflight)
@@ -36,3 +36,4 @@ The original `Courses/` directory, its history/ledgers, installed hooks, actual 
 ## Comments
 
 - 2026-10-22: RED/GREEN and complete suite evidence recorded, awaiting independent filesystem/security review.
+- 2026-10-23, release verification relay: Implemented directory-chain identity checks, bounded no-follow reads and pre-image rechecks in the portfolio and docs-sync paths. Regression coverage: `tests/test_course_portfolio.py`, `tests/test_qa_hardening.py`, `tests/test_course_docs_sync.py`. The residual-risk statement stays true: external adversarial review is OPEN and portable path APIs cannot prove complete prevention of hostile same-user concurrent swaps. Evidence at head `cecda70`: local `python -m unittest discover -s tests` exit 0, 519 tests OK (3 skipped); `python -m pytest tests/ -q` exit 0, 516 passed, 3 skipped, 385 subtests passed; GitHub Actions runs `39890427415` (push) and `39890434260` (pull_request) report 15/15 jobs success on CPython 3.11-3.15 across Ubuntu, Windows and macOS. Engineering evidence does not substitute for real learner or human tutor acceptance.

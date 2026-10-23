@@ -27,7 +27,7 @@
 
 [Likely] The highest-leverage improvement is **a provider-neutral pedagogical policy and tutor state engine** that prevents an AI model from promoting hinted responses, repeated near-identical questions, unsupported self-assessment or prematurely disclosed solutions to evidence of independent competence. The language model remains responsible for clear explanations; the deterministic CLI remains responsible for durable evidence and allowed transitions.
 
-**Priority zero is preserving the existing uncommitted hardening + selective-portfolio work.** Current Git inspection found **13 modified tracked paths + 9 untracked top-level entries**, one of which contains six actual files, for **27 individual modified/new files**. They are intentional candidate work, not junk. Git cleanup must mean reviewed integration with explicit, scoped commits and a clean resulting tree, never reset/clean/delete without classification. The canonical private **Courses/** workspace stays untouched; disposable tests use a separate temporary courses root.
+**Priority zero (completed) was preserving the hardening and selective-portfolio work that arrived uncommitted.** That candidate work is now committed on `feature/hardening-workspace` at `cecda70`, published to GitHub, and verified by 15/15 cross-platform CI jobs. Git hygiene rules stand: reviewed integration with explicit, scoped commits and a clean resulting tree, never reset/clean/delete without classification. The canonical private **Courses/** workspace stays untouched; disposable tests use a separate temporary courses root.
 
 **No claim of scientific optimization or “perfect learning.”** Evidence supports design principles, not a universally optimal brain type, invariant review schedule, guaranteed host behavior or authenticated certificate.
 
@@ -47,7 +47,7 @@ The following is grounded in repository inspection of AGENTS.md, CONTEXT.md, REA
 | Research sourcing | docs/RESEARCH.md and source policy | Present | Machine-readable claim/source lifecycle, verified vs unverified states |
 | Tutor UX | references/JOURNEY.md, PRESENTATION.md and TEACHING.md | Present but partly prose-only | Structured turn contract with runtime guards and focused output |
 | Method session audit | method receipts and course method-audit | Present | More exact audit semantics; never equate hash with behavioral compliance |
-| Course publication | local candidate scripts/learnprint_portfolio.py, publish_guard.py, ADR-0002 | Uncommitted engineering candidate | Release safety, privacy UAT, honest evidence mapping; no automatic push |
+| Course publication | scripts/learnprint_portfolio.py, publish_guard.py, ADR-0002 | Committed, CI-verified engineering | Release safety, privacy UAT, honest evidence mapping; no automatic push |
 | Live models | docs/VALIDATION.md | Not fully verified | Cross-host UAT and hallucination/prompt-injection/answer-leak regression cases |
 
 **Avoid duplicate implementation:** Preserve the canonical progress evaluator, append-only corrections, immutable course ID and existing confidence/help fields. New functionality extends contracts, not parallel ledgers or redundant mastery score stores.

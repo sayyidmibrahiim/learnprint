@@ -1,6 +1,6 @@
 # 10 — Reject linked ancestors of portfolio manifest
 
-Status: needs-triage
+Status: resolved
 Date: 2026-10-22 (Asia/Jakarta)
 Workstream: W0-03C; parent ticket: 02-preview-showcase-builder.md
 Severity: Medium (untrusted manifest path redirection; not evidence of actual data disclosure)
@@ -24,3 +24,4 @@ Only `scripts/learnprint_portfolio.py`, `tests/test_course_portfolio.py`, this i
 ## Comments
 
 - 2026-10-22: Defect reproduced RED, corrected, and validated GREEN. Ready for independent maintainer review; W0-03C parent remains IN_PROGRESS.
+- 2026-10-23, release verification relay: Implemented rejection of linked ancestors of the portfolio manifest in `scripts/learnprint_portfolio.py`. Regression coverage: `tests/test_course_portfolio.py`. Evidence at head `cecda70`: local `python -m unittest discover -s tests` exit 0, 519 tests OK (3 skipped); `python -m pytest tests/ -q` exit 0, 516 passed, 3 skipped, 385 subtests passed; GitHub Actions runs `39890427415` (push) and `39890434260` (pull_request) report 15/15 jobs success on CPython 3.11-3.15 across Ubuntu, Windows and macOS. Engineering evidence does not substitute for real learner or human tutor acceptance.

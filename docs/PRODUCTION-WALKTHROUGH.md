@@ -1,6 +1,6 @@
 # Learnprint owner walkthrough: any topic → trustworthy course → optional GitHub portfolio
 
-Status: Tested implementation on local Windows; cross-host human UAT and GitHub release CI are separate gates. Updated 2026-10-23. Start from the **repository root**. Commands below are examples, not commands already run on your actual courses. Do NOT paste private learner answers into GitHub issues or logs.
+Status: Tested implementation on local Windows plus all 15 cross-platform CI jobs green on head `cecda70` (GitHub Actions runs `39890427415` and `39890434260`). Cross-host human UAT remains a separate open gate. Updated 2026-10-23. Start from the **repository root**. Commands below are examples, not commands already run on your actual courses. Do NOT paste private learner answers into GitHub issues or logs.
 
 ## 1. Explore without writing
 ```sh

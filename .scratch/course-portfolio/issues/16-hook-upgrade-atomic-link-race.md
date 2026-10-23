@@ -1,6 +1,6 @@
 # 16 — Avoid writing through a swapped pre-commit hook during v1→v2 upgrade
 
-Status: needs-triage
+Status: resolved
 Date: 2026-10-22 (Asia/Jakarta)
 Workstream: W0-03B Git privacy hook installer
 Parent: 03-git-safety-and-migration.md
@@ -45,3 +45,4 @@ No access to original learner `Courses/`, no writes to the actual repository Git
 ## Comments
 
 - 2026-10-22: RED→GREEN and full Windows suite verified locally; review remains open.
+- 2026-10-23, release verification relay: Closed by policy change rather than a race fix: automatic upgrade of an existing hook was removed, so the v1 to v2 swap path no longer exists. `scripts/install.py` refuses every pre-existing hook. Regression coverage: `tests/test_publish_hook_install.py`. Evidence at head `cecda70`: local `python -m unittest discover -s tests` exit 0, 519 tests OK (3 skipped); `python -m pytest tests/ -q` exit 0, 516 passed, 3 skipped, 385 subtests passed; GitHub Actions runs `39890427415` (push) and `39890434260` (pull_request) report 15/15 jobs success on CPython 3.11-3.15 across Ubuntu, Windows and macOS. Engineering evidence does not substitute for real learner or human tutor acceptance.

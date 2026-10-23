@@ -1,6 +1,6 @@
 # Feature: Publishable Learnprint course portfolios with per-course privacy
 
-Status: engineering candidate implemented locally; release gates pending
+Status: engineering verified on head cecda70 (15/15 CI jobs green, PR #9); human UAT, real learner efficacy and independent security review remain OPEN
 Date: 2026-10-19
 Governing decision: docs/adr/0002-selective-course-portfolio-publication.md
 

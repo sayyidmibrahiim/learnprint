@@ -1,6 +1,6 @@
 # 02 — Commit pending agent-workflow docs
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: none
 
 ## Problem
@@ -43,3 +43,4 @@ Stage exactly these five paths (never `git add -A`):
 - Commit: `bf5cff1` — `docs: add agent workflow references and repo domain
   glossary`.
 - Status: resolved.
+- 2026-10-23, release verification relay: Resolved: the pending agent-workflow docs are committed on `feature/hardening-workspace` at `cecda70`. Evidence at head `cecda70`: local `python -m unittest discover -s tests` exit 0, 519 tests OK (3 skipped); `python -m pytest tests/ -q` exit 0, 516 passed, 3 skipped, 385 subtests passed; GitHub Actions runs `39890427415` (push) and `39890434260` (pull_request) report 15/15 jobs success on CPython 3.11-3.15 across Ubuntu, Windows and macOS. Engineering evidence does not substitute for real learner or human tutor acceptance.
