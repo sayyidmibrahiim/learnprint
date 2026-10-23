@@ -231,7 +231,7 @@ def install_hooks(dest, dry_run=False, approve=False):
     if dry_run:
         return 0
     if not approve:
-        return _fail("Pass --approve to explicitly permit installing/upgrading the hook")
+        return _fail("Pass --approve to explicitly permit installing the hook")
     # Exclusive creation never follows or overwrites an existing hook, even
     # if another process creates one between preflight and the write.
     exec_bits = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
