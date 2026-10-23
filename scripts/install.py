@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Copy portable Learnprint skills into project-specific discovery directories safely."""
 import argparse
+import os
 import shutil
+import stat
+import tempfile
 import subprocess
 import sys
 from pathlib import Path
@@ -14,10 +17,23 @@ TARGETS = {
 PERSONAL_SKILL = "learnprint-personal"
 PACKAGED_SKILLS = ("learnprint", "learnprint-assess", "learnprint-learn")
 
-HOOK_SCRIPT = """#!/bin/sh
+LEGACY_HOOK_SCRIPT = """#!/bin/sh
 # Learnprint privacy guard: reject staged learner data.
 if git diff --cached --name-only | grep -qE '^(Courses/|\\.agents/skills/learnprint-personal/|\\.claude/skills/learnprint-personal/|\\.kiro/skills/learnprint-personal/|\\.gemini/skills/learnprint-personal/)'; then
     echo "ERROR: Attempting to commit private learner data. Remove with: git reset HEAD <file>"
+    exit 1
+fi
+"""
+
+HOOK_SCRIPT = """#!/bin/sh
+# Learnprint indexed portfolio privacy guard (v2).
+# Fail closed without the Python verifier; never bypass sensitive files.
+if command -v python >/dev/null 2>&1; then
+    python scripts/learnprint_publish_guard.py --repo . || exit 1
+elif command -v python3 >/dev/null 2>&1; then
+    python3 scripts/learnprint_publish_guard.py --repo . || exit 1
+else
+    echo "ERROR: Python 3 is required for Learnprint privacy checks" >&2
     exit 1
 fi
 """
@@ -117,21 +133,115 @@ def install_personal_skill(source, dest_skill_dir, dry_run=False, approve=False)
     return 0
 
 
+def _hook_file_identity(path):
+    """Strong file identity/link count for link-swap defense.
+
+    Windows stat inode/link reporting has differed across runner versions.
+    Read Win32 BY_HANDLE_FILE_INFORMATION directly rather than trusting a
+    potentially incomplete CRT stat result. No content write or hook install.
+    """
+    if os.name != "nt":
+        item = Path(path).lstat()
+        return (item.st_dev, item.st_ino, item.st_ctime_ns, item.st_nlink)
+    import ctypes
+    from ctypes import wintypes
+
+    class BY_HANDLE_FILE_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("dwFileAttributes", wintypes.DWORD),
+            ("ftCreationTime", wintypes.FILETIME),
+            ("ftLastAccessTime", wintypes.FILETIME),
+            ("ftLastWriteTime", wintypes.FILETIME),
+            ("dwVolumeSerialNumber", wintypes.DWORD),
+            ("nFileSizeHigh", wintypes.DWORD),
+            ("nFileSizeLow", wintypes.DWORD),
+            ("nNumberOfLinks", wintypes.DWORD),
+            ("nFileIndexHigh", wintypes.DWORD),
+            ("nFileIndexLow", wintypes.DWORD),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    create = kernel32.CreateFileW
+    create.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                       wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD,
+                       wintypes.HANDLE)
+    create.restype = wintypes.HANDLE
+    get_info = kernel32.GetFileInformationByHandle
+    get_info.argtypes = (wintypes.HANDLE, ctypes.POINTER(BY_HANDLE_FILE_INFORMATION))
+    get_info.restype = wintypes.BOOL
+    close = kernel32.CloseHandle
+    close.argtypes = (wintypes.HANDLE,)
+    close.restype = wintypes.BOOL
+    handle = create(str(path), 0x80, 0x7, None, 3, 0x00200000, None)
+    if handle == ctypes.c_void_p(-1).value:
+        raise OSError(ctypes.get_last_error(), "cannot inspect hook file identity")
+    try:
+        info = BY_HANDLE_FILE_INFORMATION()
+        if not get_info(handle, ctypes.byref(info)):
+            raise OSError(ctypes.get_last_error(), "cannot read hook file identity")
+        return (
+            info.dwVolumeSerialNumber,
+            (info.nFileIndexHigh << 32) | info.nFileIndexLow,
+            (info.ftCreationTime.dwHighDateTime << 32) | info.ftCreationTime.dwLowDateTime,
+            info.nNumberOfLinks,
+        )
+    finally:
+        close(handle)
+
+
 def install_hooks(dest, dry_run=False, approve=False):
     """Install the privacy pre-commit hook into dest/.git/hooks/."""
     dest = Path(dest).expanduser().resolve()
     hook = dest / ".git" / "hooks" / "pre-commit"
-    if not (dest / ".git").exists():
-        return _fail(f"Not a git checkout: {dest}")
+    git_dir = dest / ".git"
+    if not git_dir.is_dir() or git_dir.is_symlink():
+        return _fail(f"Not a regular Git checkout directory: {dest}")
+    if not hook.parent.is_dir() or hook.parent.is_symlink():
+        return _fail(f"Refusing unsafe Git hooks directory: {hook.parent}")
+    # An alternate core.hooksPath makes .git/hooks/pre-commit inactive. Do not
+    # claim to install a working privacy gate at a location Git will not run.
+    # Query effective config (including global/system), not only local config.
+    try:
+        configured = subprocess.run(
+            ["git", "config", "--get", "core.hooksPath"], cwd=str(dest),
+            capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return _fail(f"Cannot verify active Git hooks path: {exc}")
+    if configured.returncode == 0:
+        return _fail("Refusing hook install: Git core.hooksPath overrides .git/hooks")
+    if configured.returncode != 1:
+        return _fail("Cannot verify active Git hooks path (git config failed)")
+    # Never follow a linked hook, including dangling symlinks. Upgrading a
+    # legacy hook in place would otherwise also overwrite a hardlink target.
+    if hook.is_symlink() or (hook.exists() and _hook_file_identity(hook)[3] != 1):
+        return _fail(f"Refusing linked pre-commit hook: {hook}")
     print(f"write {hook} {'(DRY RUN)' if dry_run else ''}")
-    if hook.exists():
-        return _fail(f"Refusing to overwrite existing hook {hook}")
+    guard = dest / "scripts" / "learnprint_publish_guard.py"
+    # Other projects without the verifier receive the legacy deny-all hook.
+    # The full index-aware policy is only installed where its verifier exists.
+    portfolio = dest / "scripts" / "learnprint_portfolio.py"
+    desired = HOOK_SCRIPT if guard.is_file() and portfolio.is_file() else LEGACY_HOOK_SCRIPT
+    # Cross-host CI demonstrated a linked-file replacement race during
+    # automatic legacy upgrades. Refuse ALL pre-existing hooks until an
+    # independently reviewed handle-stable migration protocol exists.
+    # A user can preserve/relocate an existing hook manually after review,
+    # then install only into a genuinely empty path with exclusive create.
+    if hook.exists() or hook.is_symlink():
+        return _fail("Existing Git hook preserved; manual reviewed migration required")
     if dry_run:
         return 0
     if not approve:
         return _fail("Pass --approve to explicitly permit installing the hook")
-    hook.write_text(HOOK_SCRIPT, encoding="utf-8")
-    print("INSTALLED pre-commit privacy hook.")
+    # Exclusive creation never follows or overwrites an existing hook, even
+    # if another process creates one between preflight and the write.
+    exec_bits = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+    try:
+        with hook.open("x", encoding="utf-8", newline="\n") as output:
+            output.write(desired)
+        hook.chmod(hook.stat().st_mode | exec_bits)
+    except OSError as exc:
+        return _fail(f"Cannot safely install pre-commit hook: {exc}")
+    print("INSTALLED new Learnprint privacy hook (existing hooks were not changed).")
     return 0
 
 

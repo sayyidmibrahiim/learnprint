@@ -26,18 +26,42 @@ class TestPrivacy(unittest.TestCase):
         r = git("ls-files")
         self.assertEqual(r.returncode, 0)
         tracked = r.stdout.splitlines()
-        self.assertFalse(any(f.startswith("Courses/") for f in tracked),
-                         "no Courses/ file may be tracked")
+        self.assertFalse(any(f.startswith("Courses/") and
+                             not f.startswith("Courses/public/") for f in tracked),
+                         "canonical private course records must not be tracked")
+        import sys
+        guard = subprocess.run([sys.executable, str(ROOT / "scripts" / "learnprint_publish_guard.py"),
+                                "--repo", str(ROOT)], cwd=ROOT, capture_output=True,
+                               text=True, timeout=30)
+        self.assertEqual(guard.returncode, 0, guard.stderr)
         self.assertFalse(any("learnprint-personal" in f for f in tracked),
                          "no personal skill file may be tracked")
 
-    def test_no_private_data_in_plan_diff(self):
-        # The published plan must not embed learner answers, tokens, or keys.
+    def test_no_private_data_in_tracked_planning_docs(self):
+        # Audit living planning files, not the removed hardening-plan filename.
+        # Never read ignored private learner files from Courses/.
         import re
-        text = (ROOT / "plan/learnprint-hardening-workspace.md").read_text(encoding="utf-8")
-        for pat in (r"(?i)api[_-]?key\s*[:=]", r"(?i)password\s*[:=]",
-                    r"sk-[A-Za-z0-9]{8,}", r"(?i)bearer\s+[A-Za-z0-9._-]+"):
-            self.assertIsNone(re.search(pat, text), f"sensitive pattern: {pat}")
+        result = git("ls-files", "-z")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        planning = sorted(
+            p for p in result.stdout.split("\0")
+            if p.endswith(".md") and p.startswith(("plan/", ".scratch/"))
+        )
+        self.assertTrue(planning, "expected tracked planning notes to audit")
+        patterns = (
+            r"(?i)api[_-]?key\s*[:=]",
+            r"(?i)password\s*[:=]",
+            r"sk-[A-Za-z0-9]{8,}",
+            r"(?i)bearer\s+[A-Za-z0-9._-]+",
+        )
+        for relative in planning:
+            content = (ROOT / relative).read_text(encoding="utf-8")
+            for pattern in patterns:
+                with self.subTest(file=relative, pattern=pattern):
+                    self.assertIsNone(
+                        re.search(pattern, content),
+                        f"sensitive pattern in {relative}: {pattern}"
+                    )
 
 
 if __name__ == "__main__":

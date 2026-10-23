@@ -3,6 +3,14 @@
 The workspace lives at `Courses/` relative to the repo root. All commands run
 from the repo root; never `cd` into subdirectories.
 
+## Universal course, private state, and optional portfolio
+
+Any narrow or broad learning request may become a course. Once a structured plan exists, `course journey-card` shows ordered unit status. The private tutor phase is initialized with `course tutor-init --approve`, read with `course tutor-status`, advanced with `course tutor-transit --approve`, and recovered across sessions. The stored phase is separate from evaluation; when a session exists, `record` demonstration events require the correct phase, matching `--task-id` and truthful help level. On Windows, `record --from-file` preserves learner Unicode and rubric JSON.
+
+`course docs-preview` and `course docs-sync --preview-digest DIGEST --approve` regenerate private derived syllabus/map/handoff from structured plans with manual-edit and linked-path guards. Do not overwrite a handmade course file simply to make synchronization pass.
+
+`course portfolio-options` permits selecting **any** course for a possible GitHub portfolio, but all records remain private until a particular allowlisted public snapshot is separately reviewed and approved; local export itself never commits or pushes.
+
 ## Lifecycle
 1. First run: agent explains the bounded scope (create courses, record
    evidence, update progress — inside `Courses/` only), user approves in chat,

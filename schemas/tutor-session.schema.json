@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "learnprint:tutor-session:v1",
+  "title": "Learnprint tutor session state (versioned, W2)",
+  "description": "Durable tutor FSM state. Validated by scripts/learnprint_tutor.py (stdlib hand-rolled validation; this document is the contract reference).",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "session_id",
+    "course_id",
+    "topic",
+    "phase",
+    "revision",
+    "current_task",
+    "events"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "session_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "course_id": { "type": "string", "minLength": 1 },
+    "topic": { "type": "string", "minLength": 1 },
+    "phase": {
+      "enum": [
+        "ORIENT",
+        "EXPLAIN",
+        "GUIDED",
+        "ATTEMPT",
+        "FEEDBACK",
+        "TEACH_BACK",
+        "TRANSFER",
+        "DELAYED_RETRIEVAL",
+        "COMPLETE"
+      ]
+    },
+    "revision": { "type": "integer", "minimum": 1 },
+    "current_task": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["task_id", "answer_hidden", "help_level", "authored_by"],
+          "properties": {
+            "task_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "answer_hidden": { "const": true },
+            "help_level": { "enum": ["none", "hint", "worked_example", "solution"] },
+            "authored_by": { "enum": ["tutor_model", "human_authored", "course_material"] },
+            "task_fingerprint": { "type": "string", "maxLength": 120 }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "outcome_not_scored": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["reason", "task_id"],
+          "properties": {
+            "reason": { "const": "confusion_exit" },
+            "task_id": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "events": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["rev", "event_id", "type", "to", "ts", "refs"],
+        "properties": {
+          "rev": { "type": "integer", "minimum": 1 },
+          "event_id": { "type": "string", "minLength": 1, "maxLength": 240 },
+          "type": { "const": "phase" },
+          "from": { "type": ["string", "null"] },
+          "to": { "enum": ["ORIENT", "EXPLAIN", "GUIDED", "ATTEMPT", "FEEDBACK", "TEACH_BACK", "TRANSFER", "DELAYED_RETRIEVAL", "COMPLETE"] },
+          "ts": { "type": "string", "minLength": 10 },
+          "refs": { "type": "object" }
+        }
+      }
+    },
+    "created_at": { "type": "string" },
+    "updated_at": { "type": "string" },
+    "provenance": { "type": "object" }
+  },
+  "additionalProperties": true
+}

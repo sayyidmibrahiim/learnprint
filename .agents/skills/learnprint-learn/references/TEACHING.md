@@ -1,4 +1,16 @@
 # Learnprint Teaching Protocol — evidence-led and practical
+<!-- CANONICAL: This is the authoritative learning policy source.
+     Mirror copies under skills/, .agents/skills/, and
+     distribution/claude-plugin/skills/ must stay byte-identical;
+     tests/test_skill_distribution_sync.py enforces parity. See ADR-0003. -->
+
+## Learner-facing communication
+
+MANDATORY: read TUTOR-LANGUAGE-AND-STAGES.md in this references directory (fallback: protocols/TUTOR-LANGUAGE-AND-STAGES.md) before every learner turn. This language/stage contract is universal for learning ANY topic. English in/on/at is merely a regression example. The topic may be broad or very specific; use its authentic requirements and exercises. Distinguish screening (0-3 prompts max) from teaching, independent test, transfer, and delayed review. Persist real evidence only through the canonical CLI.
+Use `skills/learnprint/references/PRESENTATION.md` when presenting lessons
+in any host. Prefer simple, human explanations with one functional table,
+ASCII diagram or worked example when useful, not piles of JSON or jargon.
+Host-native selection is optional; numbered choices work everywhere.
 
 ## Mandatory learning experience contract
 Always load the portable learning journey from
@@ -48,3 +60,46 @@ the current course's state.json (via validated scope-set where applicable),
 Courses/.learnprint/events.jsonl and the review queue, plus the course HANDOFF.md.
 The older manifest.json/topics layout applies only to legacy workspaces,
 not new Courses/ learners. If filesystem unavailable, output a portable `LEARNING_STATE` block the learner can save. Never claim an artifact was written unless a tool verifies it. Use small-context recovery rather than relying on long conversation history.
+
+## Repairing a historical mistaken score
+
+Do not secretly rewrite or purge old learner evidence, including a prior
+"masih gak ngerti" answer graded as 0. Explain the discrepancy and first
+obtain event-specific learner approval. Only then use `record --task-type
+correction --corrects EVENT_ID --exclude-from-assessment --approve` with the
+same course/topic/competency, a clear reason, and correct standing write scope.
+This retains the original row; no automatic evidence correction occurs when
+loading Learnprint. Treat the corrective metadata as non-mastery evidence.
+
+
+## Guard invariants (normative, T01-T08)
+
+These eight guards are binding for every host adapter and tutor turn. An
+answer that violates any guarded invariant may neither be recorded as
+independent evidence nor advance a competency. The canonical evaluator
+(rules/EVIDENCE.md) computes status; prose never overrides it.
+
+- **T01 Attempt gate.** The target answer stays hidden before a recorded
+  attempt. Exiting via an explicit learner opt-out never counts as
+  independent performance.
+- **T02 Confusion gate.** A confusion utterance ("masih gak ngerti") and an
+  unanswered clarifying question are requests for instruction. They never
+  become scored wrong attempts.
+- **T03 Help contamination.** A hint, worked example, solution reveal, or
+  leaked source disqualifies that attempt as independent evidence and must
+  be linked in the ledger as `help_level: hint|worked_example|solution`.
+- **T04 Fresh task.** Assessment after any assistance requires a new task
+  with a separate task ID, materially different content, and no exposed
+  answer key. Repeating the same question is invalid.
+- **T05 Transfer.** Novel transfer means materially novel constraints or
+  context versus the original application. When similarity is ambiguous,
+  treat it as NOT a valid transfer and escalate to human adjudication.
+- **T06 Delayed floor.** A delayed retrieval counts only when a real
+  evidence-based interval >= the retention floor has elapsed. Fake or
+  premature "delayed" events are rejected.
+- **T07 Source.** Externally checkable educational claims cite a verified
+  source or are marked `UNVERIFIED`. Fabricated citations/tool use are
+  prohibited.
+- **T08 Evidence.** Only the canonical rubric/evaluator decides competency
+  state from linked ledger events. Model self-report, a forged grade, or a
+  self-declared badge never changes status.

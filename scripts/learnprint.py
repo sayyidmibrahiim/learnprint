@@ -44,7 +44,7 @@ def validate_profile(p):
     for k in ("schema_version", "profile_id", "assessment_status", "public_template", "evidence_quality", "observed_claims", "evidence", "instruction_defaults"):
         if k not in p: errs.append("missing " + k)
     if errs: return errs
-    if p["schema_version"] != "1.0": errs.append("unsupported schema_version")
+    if p["schema_version"] not in {"1.0", "2.0"}: errs.append("unsupported schema_version")
     if p["assessment_status"] not in ASSESSMENT: errs.append("invalid assessment_status")
     if p["evidence_quality"] not in {"limited", "moderate", "strong"}: errs.append("invalid evidence_quality")
     if not isinstance(p["public_template"], bool): errs.append("public_template must be boolean")
@@ -77,6 +77,19 @@ def validate_profile(p):
             for ref in c.get("evidence_ids", []):
                 matched = next((e for e in p["evidence"] if e.get("id") == ref), {})
                 if matched.get("origin") == "self_report": errs.append(f"observed claim {c.get('id')} backed by self-report")
+    if p["schema_version"] == "2.0" and "constraints" in p:
+        cons = p["constraints"]
+        if not isinstance(cons, list):
+            errs.append("constraints must be an array")
+        else:
+            for k in cons:
+                if not isinstance(k, dict): errs.append("constraint entry not object"); continue
+                if not isinstance(k.get("constraint"), str) or not k["constraint"].strip():
+                    errs.append("constraint missing statement")
+                if k.get("category") not in {"reported", "observed", "inferred"}:
+                    errs.append("constraint category must be reported/observed/inferred")
+                if not k.get("evidence_ids") or not isinstance(k["evidence_ids"], list):
+                    errs.append("constraint missing evidence ids")
     if p["assessment_status"] == "assessed" and not p["observed_claims"]:
         errs.append("assessed profile requires evidence-linked claims")
     if p["public_template"] and p["assessment_status"] == "assessed":
@@ -597,6 +610,14 @@ def validate_event(e):
             uuid.UUID(e["session_id"])
         except (ValueError, AttributeError, TypeError):
             errs.append("session_id must be a UUID")
+    if "tutor_task_id" in e and (not isinstance(e["tutor_task_id"], str) or
+                                  not e["tutor_task_id"].strip()):
+        errs.append("tutor_task_id must be nonempty")
+    if "tutor_session_id" in e:
+        try:
+            uuid.UUID(e["tutor_session_id"])
+        except (ValueError, TypeError, AttributeError):
+            errs.append("tutor_session_id must be UUID")
     if "grader_source" in e and e["grader_source"] not in GRADER_SOURCES:
         errs.append("invalid event.grader_source")
     if "exclude_from_assessment" in e and (
@@ -2066,7 +2087,92 @@ def cmd_course_lesson_log(a):
     return 0
 
 
-def cmd_course_plan(a):
+def _portfolio_prepare(args):
+    """Portfolio output is a curated snapshot, not canonical private learner state."""
+    import learnprint_portfolio
+    try:
+        if str(uuid.UUID(args.course_id)) != args.course_id:
+            raise ValueError("course_id must be canonical UUID")
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise ValueError("portfolio requires canonical course UUID") from exc
+    root = _courses_root(args)
+    course, state_path, _ = _registered_course(root, args.course_id)
+    rel = course.get("rel_path")
+    if (not isinstance(rel, str) or not rel or "\\" in rel or ":" in rel or
+            rel.startswith("/") or any(not part or part.startswith(".")
+            for part in rel.split("/"))):
+        raise ValueError("invalid portfolio source path")
+    if root.absolute() not in state_path.parent.absolute().parents:
+        raise ValueError("portfolio source is outside the private workspace")
+    state = load(state_path)
+    _validated_course_scope(state, course["course_id"], state_path)
+    return root, state_path.parent, learnprint_portfolio
+
+
+def cmd_course_portfolio_options(a):
+    """Read-only list: any course may become a curated portfolio by opt-in."""
+    root = _courses_root(a)
+    registry = registry_read(root)
+    courses = []
+    for course in registry.get("courses", []):
+        cid = course["course_id"]
+        snapshot = root / "public" / cid
+        if snapshot.is_symlink():
+            status = "unsafe_link_manual_review"
+        elif snapshot.is_dir():
+            status = "local_snapshot_present_not_verified_as_pushed"
+        elif snapshot.exists():
+            status = "unexpected_path_manual_review"
+        else:
+            status = "not_exported"
+        courses.append({
+            "course_id": cid,
+            "title": course["title"],
+            "selectable_for_portfolio": True,
+            "snapshot_status": status,
+            "publishing": "manual_exact_preview_and_approval_required",
+            "private_choice": "do_not_export_or_use_private_manifest",
+        })
+    print(json.dumps({
+        "status": "read_only",
+        "policy": "all_courses_selectable; each_publication_opt_in",
+        "github_push": "never_automatic",
+        "courses": courses,
+    }, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_course_portfolio_preview(args):
+    _root, course_dir, portfolio = _portfolio_prepare(args)
+    preview, _ = portfolio.prepare(course_dir, args.course_id, args.manifest)
+    print(json.dumps(preview, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_course_portfolio_export(args):
+    root, course_dir, portfolio = _portfolio_prepare(args)
+    target = Path(args.output_dir).absolute()
+    private_root = root.absolute()
+    approved_public = private_root / "public" / args.course_id
+    if target == private_root or (private_root in target.parents and
+                                  target != approved_public):
+        raise ValueError("export output must be outside private Courses/ or its approved public UUID path")
+    if target == approved_public and not target.parent.exists():
+        if not args.approve:
+            raise ValueError("explicit --approve required for public directory creation")
+        preview, _ = portfolio.prepare(course_dir, args.course_id, args.manifest)
+        if not preview.get("publishable") or preview["preview_digest"] != args.preview_digest:
+            raise ValueError("publication preview mismatch or private course")
+        portfolio._existing_plain_dir(private_root)
+        target.parent.mkdir(exist_ok=False)
+    # The standing learning approval never grants publication permission.
+    result = portfolio.export(course_dir, args.course_id, args.manifest,
+                              target, args.preview_digest, args.approve)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _course_plan_payload(a):
     """Read-only: show what will be learned before any diagnostic or test."""
     root = _courses_root(a)
     c, path, registry = _registered_course(root, a.course_id)
@@ -2116,7 +2222,162 @@ def cmd_course_plan(a):
             legacy.read_text(encoding="utf-8")[:20000] if legacy.is_file() else None)
         output["course_completion"] = "unknown_no_structured_plan"
     output["recent_learning_activity"] = activity[-10:]
-    print(json.dumps(output, ensure_ascii=False, indent=2))
+    return output
+
+
+def cmd_course_plan(a):
+    """Read-only JSON representation of the canonical course plan."""
+    print(json.dumps(_course_plan_payload(a), ensure_ascii=False, indent=2))
+    return 0
+
+
+def _course_docs_proposal(a):
+    from learnprint_course_docs import preview_documents
+    root = _courses_root(a)
+    plan = _course_plan_payload(a)
+    course, path, registry = _registered_course(root, a.course_id)
+    return preview_documents(root, path.parent, plan, registry)
+
+
+def cmd_course_docs_preview(a):
+    """Read-only derived handoff/syllabus/map preview from canonical state."""
+    proposal, _targets = _course_docs_proposal(a)
+    print(json.dumps(proposal, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_course_docs_sync(a):
+    """Consent-gated derived refresh, preserving manual files and evidence."""
+    root = _courses_root(a)
+    _require(a, root, "state-update")
+    with workspace_lock(root):
+        proposal, targets = _course_docs_proposal(a)
+        if a.preview_digest != proposal["preview_digest"]:
+            raise ValueError("docs preview digest is stale; preview again")
+        from learnprint_course_docs import (
+            _read_plain_document, _snapshot_directory_chain,
+            _assert_directory_chain_unchanged, verify_unchanged_targets)
+        # Check every existing target before performing any write.
+        originals = verify_unchanged_targets(proposal, targets)
+        changed = []
+        for path, content in targets.items():
+            encoded = content.encode("utf-8")
+            previous = originals[path]
+            if previous == encoded:
+                continue
+            chain = _snapshot_directory_chain(path.parent)
+            # Recheck a second time immediately before backup and replace.
+            if path.is_symlink():
+                raise ValueError("document path became symlink after preview")
+            current = _read_plain_document(path) if path.exists() else None
+            if current != previous:
+                raise ValueError("document changed during docs-sync; abort")
+            _assert_directory_chain_unchanged(chain)
+            if previous is not None:
+                before = path.with_name(path.name + ".before-docs-" +
+                    dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + ".bak")
+                if before.exists():
+                    raise ValueError("derived docs backup already exists; refuse overwrite")
+                atomic_write_bytes(before, previous)
+            atomic_write(path, content)
+            changed.append(path.relative_to(root).as_posix())
+    print(json.dumps({"status": "synced", "course_id": a.course_id,
+                      "updated": changed, "ledger_action": "read_only_no_append",
+                      "publication": "none"}, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _course_tutor_session_path(a):
+    root = _courses_root(a)
+    course, state_path, _registry = _registered_course(root, a.course_id)
+    return root, course, state_path.parent / "tutor-session.json"
+
+
+def _ensure_private_tutor_session_file(target):
+    if target.is_symlink() or (target.exists() and
+            (not target.is_file() or target.stat().st_nlink != 1)):
+        raise ValueError("tutor session path must be an unlinked regular private file")
+    if target.exists() and target.stat().st_size > 4_000_000:
+        raise ValueError("tutor session file too large")
+
+
+def cmd_course_tutor_init(a):
+    """Start deterministic per-course tutor phase, never a learning score."""
+    import learnprint_tutor
+    root, _course, _target = _course_tutor_session_path(a)
+    _require(a, root, "state-update")
+    with workspace_lock(root):
+        _root, course, target = _course_tutor_session_path(a)
+        _ensure_private_tutor_session_file(target)
+        if target.exists():
+            raise ValueError("existing tutor phase must be resumed, not replaced")
+        doc = learnprint_tutor.initial_state(a.course_id, course["title"])
+        learnprint_tutor.atomic_write_session(target, doc)
+    print(json.dumps({"status": "initialized", "course_id": a.course_id,
+                      "session_id": doc["session_id"], "phase": doc["phase"],
+                      "revision": doc["revision"], "assessment_events_created": 0},
+                     ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_course_tutor_status(a):
+    """Read persisted phase and return one model-neutral next action."""
+    import learnprint_tutor
+    _root, _course, target = _course_tutor_session_path(a)
+    _ensure_private_tutor_session_file(target)
+    doc = learnprint_tutor.agreed_state(target)
+    result = learnprint_tutor.next_action(doc, language=a.language)
+    result.update({"course_id": a.course_id, "session_id": doc["session_id"],
+                   "revision": doc["revision"], "evidence": "phase_only_not_mastery"})
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_course_tutor_transit(a):
+    """Record an authorized state transition, never a fabricated learner answer."""
+    import learnprint_tutor
+    root, _course, _target = _course_tutor_session_path(a)
+    _require(a, root, "state-update")
+    with workspace_lock(root):
+        _root, _course, target = _course_tutor_session_path(a)
+        _ensure_private_tutor_session_file(target)
+        doc = learnprint_tutor.agreed_state(target)
+        updated = learnprint_tutor.apply_transition(
+            doc, to_phase=a.to_phase, event_id=a.event_id,
+            task_id=a.task_id, help_level=a.help_level, reason=a.reason,
+            expect_rev=a.expect_rev, task_author=a.task_author,
+            task_fingerprint=a.task_fingerprint, external_ref=a.external_ref)
+        if updated != doc:
+            learnprint_tutor.atomic_write_session(target, updated)
+    print(json.dumps({"status": "transition_confirmed", "course_id": a.course_id,
+                      "phase": updated["phase"], "revision": updated["revision"],
+                      "assessment_events_created": 0, "evidence": "phase_only_not_mastery"},
+                     ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_course_journey_card(a):
+    """Read-only learner-friendly stage card, never updates evidence."""
+    from learnprint_stage_card import render_stage_card
+    plan = _course_plan_payload(a)
+    session_phase = None
+    explicit_stage = getattr(a, "stage", None)
+    session_file = getattr(a, "session_file", None)
+    if explicit_stage and session_file:
+        raise ValueError("--stage and --session-file cannot be combined")
+    source = (Path(session_file) if session_file else _course_tutor_session_path(a)[2]) if explicit_stage is None else None
+    if source is not None and (source.exists() or source.is_symlink()):
+        _ensure_private_tutor_session_file(source)
+        import learnprint_tutor
+        session = learnprint_tutor.agreed_state(source)
+        if session.get("course_id") != a.course_id:
+            raise ValueError("tutor session belongs to another course")
+        session_phase = session["phase"]
+    print(render_stage_card(plan, stage=explicit_stage,
+                            stored_phase=session_phase,
+                            screening_used=getattr(a, "screening_used", None),
+                            unit_id=getattr(a, "unit_id", None),
+                            language=getattr(a, "language", "id")))
     return 0
 
 
@@ -2844,7 +3105,65 @@ def _confusion_only(text):
     return re.sub(r"[.!?\u2026]+$", "", text.strip().casefold()).strip() in CONFUSION_ONLY
 
 
+_RECORD_REQUIRED_FIELDS = (
+    "event_id", "topic", "competency", "task_type",
+    "answer", "rubric", "expected", "feedback",
+)
+_RECORD_OPTIONAL_FILE_FIELDS = (
+    "grader", "help_level", "confidence", "course_id",
+    "session_id", "grader_source", "task_id", "confirms", "corrects",
+    "corroborates", "exclude_from_assessment",
+)
+
+
+def _record_input_from_file(a):
+    """Resolve a private UTF-8 JSON record without shell-escaped rubric JSON.
+
+    --from-file never grants --approve, a workspace path, or write consent.
+    The existing CLI and append-only ledger validation remain authoritative.
+    """
+    source = getattr(a, "from_file", None)
+    if not source:
+        missing = [k for k in _RECORD_REQUIRED_FIELDS if getattr(a, k, None) is None]
+        if missing:
+            raise ValueError("Missing record arguments: " + ", ".join(missing))
+        return a
+    mixed = [k for k in _RECORD_REQUIRED_FIELDS if getattr(a, k, None) is not None]
+    mixed += [k for k in ("course_id", "session_id", "confirms", "corrects",
+                         "corroborates", "grader_source", "task_id")
+              if getattr(a, k, None) is not None]
+    if mixed:
+        raise ValueError("--from-file cannot be combined with inline record fields")
+    source_path = Path(source).expanduser()
+    if source_path.is_symlink() or not source_path.is_file():
+        raise ValueError("record --from-file requires a regular non-symlink JSON file")
+    if source_path.stat().st_size > 131072:
+        raise ValueError("record input JSON is too large (128 KiB maximum)")
+    payload = json.loads(source_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("record input must be a JSON object")
+    allowed = set(_RECORD_REQUIRED_FIELDS) | set(_RECORD_OPTIONAL_FILE_FIELDS)
+    unknown = set(payload) - allowed
+    missing = set(_RECORD_REQUIRED_FIELDS) - set(payload)
+    if unknown or missing:
+        raise ValueError(f"record file fields invalid: unknown={sorted(unknown)} missing={sorted(missing)}")
+    if not isinstance(payload["rubric"], dict):
+        raise ValueError("record file rubric must be a JSON object")
+    for key in _RECORD_REQUIRED_FIELDS:
+        if key != "rubric" and (not isinstance(payload[key], str) or not payload[key].strip()):
+            raise ValueError(f"record file {key} must be a nonempty string")
+    values = vars(a).copy()
+    values.update(payload)
+    values["rubric"] = json.dumps(payload["rubric"], ensure_ascii=False)
+    values["help"] = payload.get("help_level", values.get("help", "none"))
+    values.pop("help_level", None)
+    # Intentional: approval is solely the explicit --approve CLI flag, not JSON.
+    values["approve"] = bool(getattr(a, "approve", False))
+    return argparse.Namespace(**values)
+
+
 def cmd_record(a):
+    a = _record_input_from_file(a)
     w=Path(a.workspace).expanduser().resolve()
     p=w/"events.jsonl"
     courses_mode = not (w/"manifest.json").exists() and (w/".learnprint"/"registry.json").exists()
@@ -2853,6 +3172,8 @@ def cmd_record(a):
     if not (w/"manifest.json").exists(): raise ValueError("Initialize workspace first")
     if getattr(a, "session_id", None):
         raise ValueError("--session-id is only supported for Courses workspaces")
+    if getattr(a, "task_id", None):
+        raise ValueError("--task-id requires a Courses workspace and verified tutor task")
     if getattr(a, "exclude_from_assessment", False):
         raise ValueError("--exclude-from-assessment requires a Courses workspace")
     if a.task_type not in {"correction", "confirmation"} and _confusion_only(a.answer):
@@ -2920,6 +3241,38 @@ def _cmd_record_courses(a, w):
                        for x in _method_session_receipts(selected_path, course_id)):
                 raise ValueError("session_id not registered for selected course")
             e["session_id"] = session_id
+        # Once a course has an active deterministic tutor session, never
+        # accept demonstration evidence from an unrelated instructional phase.
+        # Older courses without an FSM remain backward-compatible.
+        claimed_task_id = getattr(a, "task_id", None)
+        fsm_path = (root / entry["rel_path"] / "tutor-session.json"
+                    if course_id else None)
+        if fsm_path is not None and (fsm_path.exists() or fsm_path.is_symlink()):
+            import learnprint_tutor
+            _ensure_private_tutor_session_file(fsm_path)
+            tutor = learnprint_tutor.agreed_state(fsm_path)
+            if tutor.get("course_id") != course_id:
+                raise ValueError("tutor session belongs to a different course")
+            allowed_phases = {
+                "independent_application": "ATTEMPT",
+                "novel_transfer": "TRANSFER",
+                "delayed_retrieval": "DELAYED_RETRIEVAL",
+            }
+            if a.task_type in allowed_phases:
+                if tutor["phase"] != allowed_phases[a.task_type]:
+                    raise ValueError("independent evidence requires matching live tutor phase")
+                task = tutor.get("current_task") or {}
+                if not claimed_task_id or claimed_task_id != task.get("task_id"):
+                    raise ValueError("record requires matching --task-id from tutor session")
+                if a.help != task.get("help_level"):
+                    raise ValueError("record help_level conflicts with tutor task provenance")
+                e["tutor_task_id"] = claimed_task_id
+                e["tutor_session_id"] = tutor["session_id"]
+                # These provenance links do not certify grading or mastery.
+            elif claimed_task_id:
+                raise ValueError("--task-id only applies to demonstration evidence")
+        elif claimed_task_id:
+            raise ValueError("--task-id requires an existing private tutor session")
         for link, val in (("confirms_event_id", getattr(a, "confirms", None)),
                           ("corrects_event_id", getattr(a, "corrects", None)),
                           ("corroborates_event_id", getattr(a, "corroborates", None))):
@@ -2976,13 +3329,16 @@ def main():
     rr.add_argument("--dry-run",action="store_true");rr.add_argument("--approve",action="store_true")
     rr.set_defaults(func=cmd_plan_reviews)
     rec=sub.add_parser("record")
-    for key in ("workspace","event-id","topic","competency","task-type","answer","rubric","expected","feedback"):
-        rec.add_argument("--"+key,required=True)
+    rec.add_argument("--workspace",required=True)
+    rec.add_argument("--from-file",help="Private UTF-8 JSON event input (no shell quoting)")
+    for key in ("event-id","topic","competency","task-type","answer","rubric","expected","feedback"):
+        rec.add_argument("--"+key)
     rec.add_argument("--grader",choices=["ai_reviewed","human_reviewed","not_graded"],default="not_graded")
     rec.add_argument("--help-level",dest="help",choices=sorted(HELP),default="none")
     rec.add_argument("--confidence",type=int);rec.add_argument("--approve",action="store_true");rec.set_defaults(func=cmd_record)
     rec.add_argument("--course-id",default=None)
     rec.add_argument("--session-id",default=None)
+    rec.add_argument("--task-id",default=None,help="Existing private tutor FSM task ID for scored attempt")
     rec.add_argument("--grader-source",choices=sorted(GRADER_SOURCES),default=None)
     rec.add_argument("--confirms",default=None);rec.add_argument("--corrects",default=None)
     rec.add_argument("--corroborates",default=None)
@@ -3014,6 +3370,46 @@ def main():
     ov=cs.add_parser("overview");ov.add_argument("--courses-root");ov.set_defaults(func=cmd_course_overview)
     journey=cs.add_parser("plan");journey.add_argument("--course-id",required=True)
     journey.add_argument("--courses-root");journey.set_defaults(func=cmd_course_plan)
+    dp=cs.add_parser("docs-preview", help="Read-only preview of derived syllabus, graph and handoffs")
+    dp.add_argument("--course-id",required=True);dp.add_argument("--courses-root")
+    dp.set_defaults(func=cmd_course_docs_preview)
+    ds=cs.add_parser("docs-sync", help="Consent-gated regeneration of safe derived course documentation")
+    ds.add_argument("--course-id",required=True);ds.add_argument("--courses-root")
+    ds.add_argument("--preview-digest",required=True);ds.add_argument("--approve",action="store_true")
+    ds.set_defaults(func=cmd_course_docs_sync)
+    ti=cs.add_parser("tutor-init", help="Initialize a private persisted tutor phase for this course")
+    ti.add_argument("--course-id",required=True);ti.add_argument("--courses-root")
+    ti.add_argument("--approve",action="store_true");ti.set_defaults(func=cmd_course_tutor_init)
+    tv=cs.add_parser("tutor-status", help="Read-only persisted tutor phase and next action")
+    tv.add_argument("--course-id",required=True);tv.add_argument("--courses-root")
+    tv.add_argument("--language",choices=["id","en"],default="id")
+    tv.set_defaults(func=cmd_course_tutor_status)
+    tt=cs.add_parser("tutor-transit", help="Authorized durable phase transition, not grading")
+    tt.add_argument("--course-id",required=True);tt.add_argument("--courses-root")
+    tt.add_argument("--to",dest="to_phase",required=True)
+    tt.add_argument("--event-id",required=True);tt.add_argument("--task-id")
+    tt.add_argument("--help-level",default="none",choices=["none","hint","worked_example","solution"])
+    tt.add_argument("--reason");tt.add_argument("--expect-rev",type=int)
+    tt.add_argument("--task-author",choices=["tutor_model","human_authored","course_material"])
+    tt.add_argument("--task-fingerprint");tt.add_argument("--external-ref")
+    tt.add_argument("--approve",action="store_true");tt.set_defaults(func=cmd_course_tutor_transit)
+    card=cs.add_parser("journey-card", help="Read-only ASCII unit position and truthful learning phase")
+    card.add_argument("--course-id",required=True);card.add_argument("--courses-root")
+    card.add_argument("--stage",choices=["PREPARATION","SCREENING","LESSON","GUIDED","INDEPENDENT","TRANSFER","REVIEW","PAUSE"])
+    card.add_argument("--session-file",help="Validated persisted tutor FSM session, read-only")
+    card.add_argument("--screening-used",type=int,choices=range(4))
+    card.add_argument("--unit-id");card.add_argument("--language",choices=["id","en"],default="id")
+    card.set_defaults(func=cmd_course_journey_card)
+    po=cs.add_parser("portfolio-options", help="Read-only choices for per-course GitHub portfolios")
+    po.add_argument("--courses-root");po.set_defaults(func=cmd_course_portfolio_options)
+    pp=cs.add_parser("portfolio-preview")
+    pp.add_argument("--course-id",required=True);pp.add_argument("--manifest",required=True)
+    pp.add_argument("--courses-root");pp.set_defaults(func=cmd_course_portfolio_preview)
+    pe=cs.add_parser("portfolio-export")
+    pe.add_argument("--course-id",required=True);pe.add_argument("--manifest",required=True)
+    pe.add_argument("--output-dir",required=True);pe.add_argument("--preview-digest",required=True)
+    pe.add_argument("--approve",action="store_true");pe.add_argument("--courses-root")
+    pe.set_defaults(func=cmd_course_portfolio_export)
     session=cs.add_parser("session-start");session.add_argument("--course-id",required=True)
     session.add_argument("--courses-root");session.add_argument("--approve",action="store_true")
     session.set_defaults(func=cmd_course_session_start)

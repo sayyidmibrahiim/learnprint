@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "learnprint:tutor-turn:v1",
+  "title": "Learnprint provider-neutral tutor turn contract (W6)",
+  "description": "Request contract rendered by scripts/learnprint_adapters.py and the strict model-output envelope it parses. The tutor output never carries scores or rubrics; the canonical ledger evaluator (rules/EVIDENCE.md) owns competency status.",
+  "definitions": {
+    "assistance_level": {
+      "enum": ["none", "hint", "worked_example", "solution"]
+    },
+    "source_status": {
+      "enum": ["verified", "UNVERIFIED", "learner-reported", "agent-generated", "unknown"]
+    },
+    "turn_kind": {
+      "enum": ["explain", "ask_attempt", "hint", "clarify", "feedback_describe", "transfer_task", "delayed_reminder"]
+    },
+    "turn_contract": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "learning_goal",
+        "current_competency",
+        "current_state",
+        "assistance_allowed",
+        "target_behavior",
+        "expected_next_event"
+      ],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "learning_goal": { "type": "string", "minLength": 1 },
+        "current_competency": { "type": "string", "minLength": 1 },
+        "current_state": { "type": "string", "minLength": 1 },
+        "assistance_allowed": { "$ref": "#/definitions/assistance_level" },
+        "target_behavior": { "type": "string", "minLength": 1 },
+        "prohibited_behavior": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "prior_evidence": { "type": "array", "items": { "type": "object" } },
+        "source_context": {
+          "type": "object",
+          "required": ["status"],
+          "properties": {
+            "status": { "$ref": "#/definitions/source_status" },
+            "url": { "type": "string" },
+            "retrieved_at": { "type": "string" },
+            "note": { "type": "string" }
+          }
+        },
+        "expected_next_event": { "$ref": "#/definitions/turn_kind" }
+      }
+    },
+    "model_turn": {
+      "type": "object",
+      "required": ["kind", "content"],
+      "properties": {
+        "kind": { "$ref": "#/definitions/turn_kind" },
+        "content": { "type": "string", "minLength": 1, "maxLength": 4000 },
+        "task_label": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "assistance": { "$ref": "#/definitions/assistance_level" },
+        "external_ref": { "type": "string", "minLength": 1, "maxLength": 240 }
+      },
+      "additionalProperties": false,
+      "description": "rubric/score fields are forbidden (T08); hint turns must attribute assistance (T03); delayed_reminder must carry external_ref (T06); task prompts and clarify turns must not contain the answer key (T01/T02)."
+    }
+  },
+  "type": "object",
+  "oneOf": [
+    { "$ref": "#/definitions/turn_contract" },
+    { "$ref": "#/definitions/model_turn" }
+  ]
+}
