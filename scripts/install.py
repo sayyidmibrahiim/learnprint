@@ -133,6 +133,61 @@ def install_personal_skill(source, dest_skill_dir, dry_run=False, approve=False)
     return 0
 
 
+def _hook_file_identity(path):
+    """Strong file identity/link count for link-swap defense.
+
+    Windows stat inode/link reporting has differed across runner versions.
+    Read Win32 BY_HANDLE_FILE_INFORMATION directly rather than trusting a
+    potentially incomplete CRT stat result. No content write or hook install.
+    """
+    if os.name != "nt":
+        item = Path(path).lstat()
+        return (item.st_dev, item.st_ino, item.st_nlink)
+    import ctypes
+    from ctypes import wintypes
+
+    class BY_HANDLE_FILE_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("dwFileAttributes", wintypes.DWORD),
+            ("ftCreationTime", wintypes.FILETIME),
+            ("ftLastAccessTime", wintypes.FILETIME),
+            ("ftLastWriteTime", wintypes.FILETIME),
+            ("dwVolumeSerialNumber", wintypes.DWORD),
+            ("nFileSizeHigh", wintypes.DWORD),
+            ("nFileSizeLow", wintypes.DWORD),
+            ("nNumberOfLinks", wintypes.DWORD),
+            ("nFileIndexHigh", wintypes.DWORD),
+            ("nFileIndexLow", wintypes.DWORD),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    create = kernel32.CreateFileW
+    create.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                       wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD,
+                       wintypes.HANDLE)
+    create.restype = wintypes.HANDLE
+    get_info = kernel32.GetFileInformationByHandle
+    get_info.argtypes = (wintypes.HANDLE, ctypes.POINTER(BY_HANDLE_FILE_INFORMATION))
+    get_info.restype = wintypes.BOOL
+    close = kernel32.CloseHandle
+    close.argtypes = (wintypes.HANDLE,)
+    close.restype = wintypes.BOOL
+    handle = create(str(path), 0x80, 0x7, None, 3, 0x00200000, None)
+    if handle == ctypes.c_void_p(-1).value:
+        raise OSError(ctypes.get_last_error(), "cannot inspect hook file identity")
+    try:
+        info = BY_HANDLE_FILE_INFORMATION()
+        if not get_info(handle, ctypes.byref(info)):
+            raise OSError(ctypes.get_last_error(), "cannot read hook file identity")
+        return (
+            info.dwVolumeSerialNumber,
+            (info.nFileIndexHigh << 32) | info.nFileIndexLow,
+            info.nNumberOfLinks,
+        )
+    finally:
+        close(handle)
+
+
 def install_hooks(dest, dry_run=False, approve=False):
     """Install the privacy pre-commit hook into dest/.git/hooks/."""
     dest = Path(dest).expanduser().resolve()
@@ -157,7 +212,7 @@ def install_hooks(dest, dry_run=False, approve=False):
         return _fail("Cannot verify active Git hooks path (git config failed)")
     # Never follow a linked hook, including dangling symlinks. Upgrading a
     # legacy hook in place would otherwise also overwrite a hardlink target.
-    if hook.is_symlink() or (hook.exists() and hook.stat().st_nlink != 1):
+    if hook.is_symlink() or (hook.exists() and _hook_file_identity(hook)[2] != 1):
         return _fail(f"Refusing linked pre-commit hook: {hook}")
     print(f"write {hook} {'(DRY RUN)' if dry_run else ''}")
     guard = dest / "scripts" / "learnprint_publish_guard.py"
@@ -168,7 +223,7 @@ def install_hooks(dest, dry_run=False, approve=False):
     original_identity = None
     if hook.exists():
         original_info = hook.lstat()
-        original_identity = (original_info.st_dev, original_info.st_ino)
+        original_identity = _hook_file_identity(hook)[:2]
         prior = hook.read_text(encoding="utf-8").replace("\r\n", "\n")
         if prior == desired:
             return _fail(f"Refusing to overwrite existing hook {hook}")
@@ -197,9 +252,9 @@ def install_hooks(dest, dry_run=False, approve=False):
                 with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as output:
                     output.write(desired)
                 current = hook.lstat()
-                if (hook.is_symlink() or current.st_nlink != 1 or
+                if (hook.is_symlink() or _hook_file_identity(hook)[2] != 1 or
                         not stat.S_ISREG(current.st_mode) or
-                        (current.st_dev, current.st_ino) != original_identity):
+                        _hook_file_identity(hook)[:2] != original_identity):
                     return _fail("Pre-commit hook changed during upgrade; refusing")
                 candidate.chmod(stat.S_IMODE(current.st_mode) | exec_bits)
                 os.replace(str(candidate), str(hook))

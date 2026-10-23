@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import stat
+import sys
 import tempfile
 from pathlib import Path, PurePosixPath
 
@@ -74,8 +75,25 @@ def _is_reparse_point(path):
                 getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
 
 
-def _existing_plain_dir(path):
+def _trusted_system_alias(path):
+    """Normalize only macOS's fixed /var -> /private/var OS alias.
+
+    Typical macOS temporary files use /var/folders while /var is a
+    system-managed symlink. Never resolve arbitrary user-owned links: those
+    remain forbidden lower in the directory chain.
+    """
     path = Path(path).absolute()
+    if (sys.platform == "darwin" and len(path.parts) >= 2
+            and path.parts[0] == "/" and path.parts[1] == "var"):
+        system_alias = Path("/var")
+        if (system_alias.is_symlink()
+                and system_alias.resolve(strict=True) == Path("/private/var")):
+            return Path("/private/var", *path.parts[2:])
+    return path
+
+
+def _existing_plain_dir(path):
+    path = _trusted_system_alias(path)
     for item in (path, *path.parents):
         if item.is_symlink():
             raise ValueError("symlink directory is not a trusted portfolio boundary")
@@ -93,7 +111,7 @@ def _snapshot_directory_chain(path):
     filesystem writer.
     """
     chain = []
-    current = Path(path).absolute()
+    current = _trusted_system_alias(path)
     for item in (current, *current.parents):
         info = item.lstat()
         if (not stat.S_ISDIR(info.st_mode) or

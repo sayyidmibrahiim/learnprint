@@ -205,7 +205,7 @@ class TestPortfolio(unittest.TestCase):
     def _make_real_windows_junction(self, link, target):
         # All paths must stay inside this disposable TemporaryDirectory.
         root = Path(self.tmp.name).resolve()
-        self.assertTrue(link.absolute().is_relative_to(root))
+        self.assertTrue((link.parent.resolve() / link.name).is_relative_to(root))
         self.assertTrue(target.resolve().is_relative_to(root))
         command = subprocess.run(
             ["cmd.exe", "/d", "/c", "mklink", "/J", str(link), str(target)],

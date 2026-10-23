@@ -1,5 +1,9 @@
 # Release Notes: Hardening Workspace (feature/hardening-workspace)
 
+### PR #9 cross-platform failure remediation (2026-10-23)
+
+First remote CI run 39843827147: Ubuntu matrix passed, Windows/macOS failures observed. Root causes: macOS legitimate /var alias wrongly rejected, Windows junction fixture lexical-vs-resolved path mismatch, Windows hook link-swap identity false negative. Changed portfolio chain canonicalization for only the exact OS alias, fixed junction test parent-only canonicalization, and hardened Windows hook identity via kernel32. Local rerun `python -m pytest tests/ -q`: 516 passed, 3 skipped, 385 subtests, exit0; focused 47 passed, 3 skipped. This update requires fresh remote CI before release; do not treat initial CI as green.
+
 ### 2026-10-23 full release-candidate verification (current)
 
 - `python -m pytest tests/ -q`: exit 0, **516 passed, 3 skipped, 385 subtests**, Windows, ~288.37 seconds.

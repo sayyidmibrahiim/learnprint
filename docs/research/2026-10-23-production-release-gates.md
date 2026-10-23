@@ -22,6 +22,15 @@ Date: 2026-10-23 (Asia/Jakarta) | Branch: feature/hardening-workspace
 - **Portable CLI:** `record --from-file` for faithful Unicode learner responses and structured rubric JSON, with independent CLI `--approve`, never approval embedded in JSON. No fake learner events or grading.
 - **Portfolio selection:** `portfolio-options` read-only lists every course; `portfolio-preview` derives a bounded digest and `portfolio-export` requires specific approval; does not stage, commit, push or publish.
 
+## Actual GitHub CI finding and remediation (2026-10-23)
+
+The first PR #9 remote 15-job GitHub Actions matrix revealed **Ubuntu 3.11–3.15 passed, Windows and macOS jobs failed** despite 516 Windows-local pytest passes. These failures are genuine and no pre-fix remote PASS is claimed.
+
+- macOS's OS-maintained `/var -> /private/var` alias made legitimate disposable fixtures fail portfolio directory-chain symlink validation before privacy assertions. `scripts/learnprint_portfolio.py` now normalizes **only that exact trusted macOS OS alias** for directory-chain verification; it still rejects arbitrary symlinks and linked paths below it.
+- Windows GitHub runner temporary root used a path alias inconsistent with `Path.absolute()` vs `Path.resolve()` in three junction fixture containment assertions. The regression fixture now canonicalizes **the existing parent only**, never resolves the malicious junction leaf.
+- Windows legacy hook upgrade link-swap race test showed a false acceptance under some NTFS/stat implementations. `scripts/install.py` now checks original/current hook identity and link count through Win32 `GetFileInformationByHandle` (read-only), rather than relying only on potentially incomplete CRT stat inode/link metadata.
+- Focused local regression tests: 47 passed, 3 skipped; fresh full Windows-local pytest **516 passed, 3 skipped, 385 subtests passed**. Cross-platform jobs must rerun on the new commit; no claiming success until observed.
+
 ## Release gate truth table
 | Gate | Evidence standard | Current scope |
 | --- | --- | --- |
