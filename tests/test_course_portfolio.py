@@ -48,6 +48,19 @@ class TestPortfolio(unittest.TestCase):
                                        "basis": "self_reported"}]}
         self.save()
 
+    @staticmethod
+    def _fixture_path_key(path):
+        """Lexical only: never call is_symlink/lstat inside a patched lstat.
+
+        macOS TemporaryDirectory may be /var/... while the implementation
+        checks the trusted OS spelling /private/var/.... This normalizes only
+        that exact prefix, not any user-controlled symbolic links.
+        """
+        key = Path(path).absolute()
+        if sys.platform == "darwin" and key.parts[:2] == ("/", "var"):
+            return Path("/private/var", *key.parts[2:])
+        return key
+
     def save(self):
         self.manifest.write_text(json.dumps(self.data), encoding="utf-8")
 
@@ -194,7 +207,7 @@ class TestPortfolio(unittest.TestCase):
 
         def fake_lstat(path, *args, **kwargs):
             info = real_lstat(path, *args, **kwargs)
-            if portfolio._trusted_system_alias(path) == portfolio._trusted_system_alias(target):
+            if self._fixture_path_key(path) == self._fixture_path_key(target):
                 return SimpleNamespace(
                     st_mode=info.st_mode,
                     st_file_attributes=getattr(info, "st_file_attributes", 0) | 0x400)
@@ -294,7 +307,7 @@ class TestPortfolio(unittest.TestCase):
         original = Path.is_symlink
 
         def fake_is_symlink(path):
-            return (portfolio._trusted_system_alias(path) == portfolio._trusted_system_alias(parent)
+            return (self._fixture_path_key(path) == self._fixture_path_key(parent)
                     or original(path))
 
         with mock.patch.object(Path, "is_symlink", fake_is_symlink):
@@ -346,7 +359,7 @@ class TestPortfolio(unittest.TestCase):
         triggered = []
 
         def change_parent_before_open(path, flags, *args, **kwargs):
-            if (portfolio._trusted_system_alias(path) == portfolio._trusted_system_alias(original_file)
+            if (self._fixture_path_key(path) == self._fixture_path_key(original_file)
                     and not triggered):
                 self.lab.rename(moved)
                 self.lab.mkdir()

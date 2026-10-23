@@ -43,6 +43,10 @@ Follow-up CI run `39888572396` demonstrated two distinct regressions: macOS synt
 
 The cross-platform CI matrix repeatedly demonstrated that automatic replacement of *existing* legacy `.git/hooks/pre-commit` can pass a link-swap test on Windows and macOS. Neither rechecking `stat` nor probing Win32 FILETIME/identity nor pinning a read descriptor proved stable across runners. **Accepted fail-closed resolution:** the installer now uses exclusive `open("x")` **only when no hook exists**, and refuses every pre-existing hook, including a valid legacy Learnprint hook. It does not mutate that hook or any external hardlink target. An owner can inspect and archive the old hook manually, then install a new one into a proven-empty path; this is a separately reviewed operation and not an implicit agent upgrade. The unreachable legacy-replacement code was removed, and regression `test_existing_legacy_hook_is_preserved_even_with_approval` added. Focused suite: 41 passed, 2 skipped (20 subtests). Real CI rerun still required; do NOT mark release DONE until all 15 GitHub jobs pass.
 
+### macOS mock recursion regression (2026-10-23)
+
+PR #9 CI run 39889996180: Windows Python 3.15 already passed after disabling unsafe existing-hook upgrade; macOS Python 3.13 exposed test-only infinite recursion because synthetic Path.lstat mock called `_trusted_system_alias`, which internally calls `Path.is_symlink`/lstat. New fixture `_fixture_path_key` uses strictly lexical `/var` to `/private/var` mapping under macOS; it never calls lstat/is_symlink, preventing recursive mocks while matching OS alias paths. Windows focused `python -m pytest tests/test_course_portfolio.py tests/test_publish_hook_install.py -q`: 41 passed, 2 skipped, 20 subtests. Cross-platform CI must run again on this commit.
+
 ## Release gate truth table
 | Gate | Evidence standard | Current scope |
 | --- | --- | --- |
