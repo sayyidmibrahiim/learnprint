@@ -31,6 +31,10 @@ The first PR #9 remote 15-job GitHub Actions matrix revealed **Ubuntu 3.11–3.1
 - Windows legacy hook upgrade link-swap race test showed a false acceptance under some NTFS/stat implementations. `scripts/install.py` now checks original/current hook identity and link count through Win32 `GetFileInformationByHandle` (read-only), rather than relying only on potentially incomplete CRT stat inode/link metadata.
 - Focused local regression tests: 47 passed, 3 skipped; fresh full Windows-local pytest **516 passed, 3 skipped, 385 subtests passed**. Cross-platform jobs must rerun on the new commit; no claiming success until observed.
 
+### CI follow-up remediation, 2026-10-23
+
+CI follow-up run `39888014467` reproduced Windows 3.11 hardlink-swap failure even after file-index/link-count hardening. Additional guard now binds hook identity to the Win32 creation FILETIME as well as volume/file index; on POSIX uses st_ctime_ns in identity. This prevents same-file-index reuse from being treated as the original file. Focused local `python -m pytest tests/test_course_portfolio.py tests/test_publish_hook_install.py -q`: 41 passed, 2 skipped, 20 subtests. **Remote cross-platform test must rerun after this patch; not yet verified.**
+
 ## Release gate truth table
 | Gate | Evidence standard | Current scope |
 | --- | --- | --- |

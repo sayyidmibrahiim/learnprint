@@ -4,6 +4,10 @@
 
 First remote CI run 39843827147: Ubuntu matrix passed, Windows/macOS failures observed. Root causes: macOS legitimate /var alias wrongly rejected, Windows junction fixture lexical-vs-resolved path mismatch, Windows hook link-swap identity false negative. Changed portfolio chain canonicalization for only the exact OS alias, fixed junction test parent-only canonicalization, and hardened Windows hook identity via kernel32. Local rerun `python -m pytest tests/ -q`: 516 passed, 3 skipped, 385 subtests, exit0; focused 47 passed, 3 skipped. This update requires fresh remote CI before release; do not treat initial CI as green.
 
+### CI follow-up remediation, 2026-10-23
+
+CI follow-up run `39888014467` reproduced Windows 3.11 hardlink-swap failure even after file-index/link-count hardening. Additional guard now binds hook identity to the Win32 creation FILETIME as well as volume/file index; on POSIX uses st_ctime_ns in identity. This prevents same-file-index reuse from being treated as the original file. Focused local `python -m pytest tests/test_course_portfolio.py tests/test_publish_hook_install.py -q`: 41 passed, 2 skipped, 20 subtests. **Remote cross-platform test must rerun after this patch; not yet verified.**
+
 ### 2026-10-23 full release-candidate verification (current)
 
 - `python -m pytest tests/ -q`: exit 0, **516 passed, 3 skipped, 385 subtests**, Windows, ~288.37 seconds.

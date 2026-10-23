@@ -142,7 +142,7 @@ def _hook_file_identity(path):
     """
     if os.name != "nt":
         item = Path(path).lstat()
-        return (item.st_dev, item.st_ino, item.st_nlink)
+        return (item.st_dev, item.st_ino, item.st_ctime_ns, item.st_nlink)
     import ctypes
     from ctypes import wintypes
 
@@ -182,6 +182,7 @@ def _hook_file_identity(path):
         return (
             info.dwVolumeSerialNumber,
             (info.nFileIndexHigh << 32) | info.nFileIndexLow,
+            (info.ftCreationTime.dwHighDateTime << 32) | info.ftCreationTime.dwLowDateTime,
             info.nNumberOfLinks,
         )
     finally:
@@ -212,7 +213,7 @@ def install_hooks(dest, dry_run=False, approve=False):
         return _fail("Cannot verify active Git hooks path (git config failed)")
     # Never follow a linked hook, including dangling symlinks. Upgrading a
     # legacy hook in place would otherwise also overwrite a hardlink target.
-    if hook.is_symlink() or (hook.exists() and _hook_file_identity(hook)[2] != 1):
+    if hook.is_symlink() or (hook.exists() and _hook_file_identity(hook)[3] != 1):
         return _fail(f"Refusing linked pre-commit hook: {hook}")
     print(f"write {hook} {'(DRY RUN)' if dry_run else ''}")
     guard = dest / "scripts" / "learnprint_publish_guard.py"
@@ -223,7 +224,7 @@ def install_hooks(dest, dry_run=False, approve=False):
     original_identity = None
     if hook.exists():
         original_info = hook.lstat()
-        original_identity = _hook_file_identity(hook)[:2]
+        original_identity = _hook_file_identity(hook)[:3]
         prior = hook.read_text(encoding="utf-8").replace("\r\n", "\n")
         if prior == desired:
             return _fail(f"Refusing to overwrite existing hook {hook}")
@@ -252,9 +253,9 @@ def install_hooks(dest, dry_run=False, approve=False):
                 with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as output:
                     output.write(desired)
                 current = hook.lstat()
-                if (hook.is_symlink() or _hook_file_identity(hook)[2] != 1 or
+                if (hook.is_symlink() or _hook_file_identity(hook)[3] != 1 or
                         not stat.S_ISREG(current.st_mode) or
-                        _hook_file_identity(hook)[:2] != original_identity):
+                        _hook_file_identity(hook)[:3] != original_identity):
                     return _fail("Pre-commit hook changed during upgrade; refusing")
                 candidate.chmod(stat.S_IMODE(current.st_mode) | exec_bits)
                 os.replace(str(candidate), str(hook))

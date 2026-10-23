@@ -25,6 +25,10 @@
 
 PR #9, head de91a19, GitHub Actions run `39843827147`: Ubuntu 3.11–3.15 passed; macOS and Windows failed. Remediation: `scripts/learnprint_portfolio.py` explicitly normalizes only trusted macOS /var → /private/var system alias while preserving link checks, Windows temp fixture parent canonicalization in `tests/test_course_portfolio.py`, and NTFS Win32 file-id/link-count verification in `scripts/install.py` for hook upgrade. Local focused 47 passed/3 skipped, full suite 516 passed/3 skipped/385 subtests. **Remote follow-up CI NOT VERIFIED until the new push and actual jobs finish; release cannot be called PASS based on Windows only.**
 
+### CI follow-up remediation, 2026-10-23
+
+CI follow-up run `39888014467` reproduced Windows 3.11 hardlink-swap failure even after file-index/link-count hardening. Additional guard now binds hook identity to the Win32 creation FILETIME as well as volume/file index; on POSIX uses st_ctime_ns in identity. This prevents same-file-index reuse from being treated as the original file. Focused local `python -m pytest tests/test_course_portfolio.py tests/test_publish_hook_install.py -q`: 41 passed, 2 skipped, 20 subtests. **Remote cross-platform test must rerun after this patch; not yet verified.**
+
 ## RELEASE RELAY UPDATE — 2026-10-23 (latest, supersedes older numerical snapshots)
 
 **Final local verification addendum:** pytest 516 passed/3 skipped/385 subtests, exit 0; unittest 519 tests OK/3 skipped, exit 0; packaging PASS, index privacy guard PASS with 0 private indexed after exact 49-path public-only staging; three real course IDs validate VALID. All technical verification happened on Windows; external GitHub Actions CI/human UAT remain NOT VERIFIED.
