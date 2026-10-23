@@ -42,3 +42,4 @@ None — push + PR only.
 ## Comments
 
 - 2026-10-23, release verification relay: Resolved: branch pushed and PR #9 opened against `main`. Runs `39890427415` and `39890434260` are 15/15 green on head `cecda70`; merge is a separate owner decision tracked by `course-portfolio/issues/05-release-gate.md`. Evidence at head `cecda70`: local `python -m unittest discover -s tests` exit 0, 519 tests OK (3 skipped); `python -m pytest tests/ -q` exit 0, 516 passed, 3 skipped, 385 subtests passed; GitHub Actions runs `39890427415` (push) and `39890434260` (pull_request) report 15/15 jobs success on CPython 3.11-3.15 across Ubuntu, Windows and macOS. Engineering evidence does not substitute for real learner or human tutor acceptance.
+- 2026-10-23, post-merge: PR #9 merged into `main` as `1b9b785` and the remote feature branch was deleted. `main` run `39908358179` is 15/15 green.

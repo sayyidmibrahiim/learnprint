@@ -2,7 +2,7 @@
 
 **Portable, evidence-gated adaptive learning skills.** A public starter for assessing what a learner can actually do, generating a local learning profile/skill, and learning any topic with verified sources, concept maps, analogies, hands-on practice, tests, and spaced retrieval.
 
-> Status: **public-ready release candidate** on `feature/hardening-workspace`. The founder profile reflects a real but informal conversational assessment; it is **not** a clinical, neurological, psychometric, or scientifically validated optimal learning style. All 15 cross-platform CI jobs pass on head `cecda70` (CPython 3.11-3.15 on Ubuntu, Windows, macOS), and the local Windows suites pass; full live learning remains subject to user acceptance on each host. See [VALIDATION.md](docs/VALIDATION.md).
+> Status: **public-release candidate** on `main` at merge commit `1b9b785`. The founder profile reflects a real but informal conversational assessment; it is **not** a clinical, neurological, psychometric, or scientifically validated optimal learning style. All 15 cross-platform CI jobs pass on `main` run `39908358179` (CPython 3.11-3.15 on Ubuntu, Windows, macOS), and the local Windows suites pass; full live learning remains subject to user acceptance on each host. See [VALIDATION.md](docs/VALIDATION.md).
 
 ## Quick start: OpenCode without global customizations
 

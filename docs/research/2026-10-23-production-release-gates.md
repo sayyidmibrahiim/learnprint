@@ -49,6 +49,8 @@ PR #9 CI run 39889996180: Windows Python 3.15 already passed after disabling uns
 
 ## Verification result on head `cecda70` (2026-10-23)
 
+Merged into `main` as `1b9b785`; post-merge push run `39908358179` is 15/15 green on the merge commit.
+
 - GitHub Actions run `39890427415` (push) and `39890434260` (pull_request): **15/15 jobs success**, ubuntu-latest, windows-latest, macos-latest x CPython 3.11, 3.12, 3.13, 3.14, 3.15.
 - Local Windows: `python -m unittest discover -s tests` exit 0, 519 tests, OK (3 skipped). `python -m pytest tests/ -q` exit 0, 516 passed, 3 skipped, 385 subtests passed.
 - `python scripts/check_package.py` exit 0; `python scripts/learnprint_publish_guard.py --repo .` exit 0 with zero indexed paths; founder and starter profiles VALID; CLI help exit 0.
@@ -63,7 +65,7 @@ PR #9 CI run 39889996180: Windows Python 3.15 already passed after disabling uns
 | Publication negative tests | Disposable staging, malicious paths, symlinks/reparse, forced private index entries | Automated fixtures pass locally and in CI; external adversarial security review OPEN |
 | Human tutor behavior | Real transcripts: fluency, stage labels, independent response fidelity, prompt injection | NOT VERIFIED by synthetic tests; needs a real host and real tutor session |
 | Human learning effectiveness | Repeated genuine learner performance, unaided transfer/delayed recall | NOT VERIFIED; no participants invented |
-| Git integration | Exact reviewed public paths committed, branch pushed, PR CI green, approved merge | Committed and pushed; PR #9 MERGEABLE and CLEAN; merge into `main` pending |
+| Git integration | Exact reviewed public paths committed, branch pushed, PR CI green, approved merge | PASS: PR #9 merged into `main` as `1b9b785`; post-merge run `39908358179` is 15/15 green |
 | Real public portfolio | Per-course exact learner consent and review | NOT requested for any existing private course |
 
 **Decision:** `production ready` and `publish ready` cannot honestly be marked PASS until all release-critical gates are observed. Closing a tracking ticket records its resolution; it never substitutes for a runtime/learner acceptance test. There is no technical reason to publish private Courses automatically.

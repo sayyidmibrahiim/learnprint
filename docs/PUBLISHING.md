@@ -6,16 +6,18 @@ https://github.com/sayyidmibrahiim/learnprint
 ## What the branches mean
 
 - `main` is the reviewed, integrated release base. It does **not** mean every future feature is finished.
-- `feature/hardening-workspace` is the current Windows/local implementation branch and contains advanced W0-W11 work not necessarily in `origin/main`. Treat it as source of truth for unpushed local changes.
+- `feature/hardening-workspace` was merged into `main` through PR #9 (merge commit `1b9b785`) and its remote branch was deleted after merge. `main` is now the source of truth.
 - `fix/tutor-language-stage-contract-20261023` / draft PR #8 was authored independently against the old remote `main`. It overlaps with this local branch, so do not merge it into `main` or rebase/reset local hardening blindly. Its universal language/stage policy has been re-integrated into the canonical local `protocols/` tree with mirror tests, rather than introducing inconsistent policy copies.
 
-## Controlled integration to main (runbook, NOT an executed operation)
+## Controlled integration to main (executed 2026-10-23 for PR #9)
+
+Outcome: explicit path-level staging, privacy guard OK with zero indexed paths, pre-merge CI 15/15 on `83026b5`, merge commit `1b9b785`, and post-merge run `39908358179` 15/15 green. Steps below remain the reusable runbook.
 
 1. Finish the applicable tasks on `feature/hardening-workspace`, rerun tests, package and staged-index publication guard. Check exact change inventory; protect all private `Courses/` state.
 2. Resolve all on-disk edits/claims and use a local Git tool with explicit path-level staging, diff review and privacy scan. Commit coherent units only with owner authorization; never `git add -A`, `git reset --hard`, or `git clean`.
 3. Fetch `origin/main`, inspect ancestry/divergence. Push the reviewed feature branch only with owner approval, then open a SINGLE integration pull request against `main`. PR #8 is CLOSED and unmerged as redundant; then leave it CLOSED as superseded, not merge duplicate changes. PR #8 was closed unmerged on 2026-10-23 after its universal policy was migrated and regression-tested on this local branch.
 4. Require PR CI, Windows tests, cross-platform Python versions, privacy guard, and real host/model UAT for any feature making behavioral claims. Distinguish engineering PASS from human learning effectiveness NOT VERIFIED.
-5. Merge via GitHub only after the diff/CI/reviews pass. Then update/recreate the next feature branch from the current `main`. Tag `v1.0.0` only when the specifically agreed release acceptance criteria are met.
+5. Merge via GitHub only after the diff/CI/reviews pass. Then update/recreate the next feature branch from the current `main`. Tag `v1.0.0` only when the specifically agreed release acceptance criteria are met. That tag was NOT created on 2026-10-23 because human UAT, learner efficacy and independent security review are still open.
 
 ## Private Courses and optional public course portfolios
 

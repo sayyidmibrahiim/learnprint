@@ -11,10 +11,10 @@
 
 ## CURRENT STATE — 2026-10-23, verified (supersedes every "not yet verified" note below)
 
-- Branch `feature/hardening-workspace`, HEAD `cecda70cd0a4e14bfbb08fb3da0ebe891e3924a1`, worktree clean, remote in sync.
-- PR #9 (https://github.com/sayyidmibrahiim/learnprint/pull/9) targets `main`; state `MERGEABLE`, `mergeStateStatus: CLEAN`, not merged.
-- **Cross-platform CI is green on this exact head:** push run `39890427415` and pull-request run `39890434260` each report **15/15 jobs success** across ubuntu-latest, windows-latest, macos-latest and CPython 3.11, 3.12, 3.13, 3.14, 3.15.
-- **Local Windows evidence on the same head:** `python -m unittest discover -s tests` exit 0, 519 tests, OK (3 skipped); `python -m pytest tests/ -q` exit 0, 516 passed, 3 skipped, 385 subtests passed.
+- **Merged.** PR #9 (https://github.com/sayyidmibrahiim/learnprint/pull/9) is merged into `main` as `1b9b7855fd9a45101ce7753ed44850657f1b8383`. The local checkout is on `main`, clean and in sync.
+- **Post-merge CI is green on `main`:** push run `39908358179` reports **15/15 jobs success** across ubuntu-latest, windows-latest, macos-latest and CPython 3.11, 3.12, 3.13, 3.14, 3.15.
+- Pre-merge evidence stays recorded in runs `39890427415`, `39890434260`, `39894400865` and `39894403803`, all 15/15.
+- **Local Windows evidence on head `cecda70`:** `python -m unittest discover -s tests` exit 0, 519 tests, OK (3 skipped); `python -m pytest tests/ -q` exit 0, 516 passed, 3 skipped, 385 subtests passed.
 - `python scripts/check_package.py` exit 0 PACKAGING OK. `python scripts/learnprint_publish_guard.py --repo .` exit 0 with zero indexed paths. `profiles/founder-default.json` and `templates/learner-profile-starter.json` VALID. `learnprint.py --help` exit 0.
 - **Hook policy is final and fail-closed:** the installer never replaces an existing `.git/hooks/pre-commit`, including a legacy Learnprint hook. Manual reviewed migration only. See `scripts/install.py` and `tests/test_publish_hook_install.py`.
 - **Still open, human-only, never to be relabeled DONE:** real multilingual tutor UAT on a live host, independent human learning efficacy/retention, independent adversarial filesystem security review. Merge into `main` is a separate pending decision.

@@ -1,6 +1,6 @@
 # Spec: Finish & perfect Learnprint (post-hardening)
 
-Status: resolved except live human UAT; engineering verified on head cecda70
+Status: merged to `main` at `1b9b785`; only live human UAT remains open
 Date: 2026-10-17 (grilling session settled all open decisions)
 
 ## Goal

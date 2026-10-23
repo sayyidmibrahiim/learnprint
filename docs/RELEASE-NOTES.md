@@ -1,5 +1,11 @@
 # Release Notes: Hardening Workspace (feature/hardening-workspace)
 
+### Merged to main (2026-10-23)
+
+- PR #9 merged into `main` as merge commit `1b9b7855fd9a45101ce7753ed44850657f1b8383`; post-merge push run `39908358179` reports 15/15 jobs success.
+- Supply chain: `actions/checkout` and `actions/setup-python` are pinned to immutable v7 commit SHAs, weekly `github-actions` dependency updates are enabled, and `SECURITY.md` documents private reporting, supported runtimes and the fail-closed hook policy.
+- No release tag was created. Human UAT, learner efficacy and independent security review are still open, so a `v1.0.0` tag would overclaim.
+
 ### Release-candidate verification, all 15 CI jobs green (2026-10-23)
 
 - Head commit `cecda70cd0a4e14bfbb08fb3da0ebe891e3924a1` on `feature/hardening-workspace`; PR #9 targets `main`.
